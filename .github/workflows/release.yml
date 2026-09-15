@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  # The identity npm exchanges for a short-lived publishing credential.
+  id-token: write
 
 jobs:
   release:
@@ -18,8 +20,20 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
+      - name: Check the tag names the version being released
+        # The registry will not accept a replacement for a version already
+        # published, so a tag that does not match package.json either publishes
+        # something nobody asked for or fails after the release is already cut.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not name package.json version $version." >&2
+            exit 1
+          fi
       - name: Create ZIP archive
         run: |
           cd dist
@@ -29,3 +43,15 @@ jobs:
           files: |
             dist/*.js
             turbowarp-extension.zip
+      - name: Use an npm that can publish without a stored token
+        # Trusted publishing needs npm 11.5.1 or newer, and Node 22 ships 10.
+        run: npm install -g npm@latest
+      - name: Publish to npm
+        # No token in this repository. The package's trusted publisher on
+        # npmjs.com names this repository and this workflow, and npm checks that
+        # instead; the credential it issues lives for the length of the job.
+        # Provenance is attached without asking.
+        #
+        # Runs last, so a failed check or a mismatched tag stops the release
+        # before anything reaches the registry, where it cannot be taken back.
+        run: npm publish --access public
