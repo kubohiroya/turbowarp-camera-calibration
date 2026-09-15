@@ -1,0 +1,14 @@
+{
+  "extensionName": "TurboWarp-Camera-Calibration",
+  "blocks": [
+    {
+      "opcode": "cameraCalibrationState",
+      "blockType": "REPORTER",
+      "text": "camera calibration state [CAMERA_ID]",
+      "description": "Returns the calibration session state for one shared Camera Source camera. The calibration procedure is not implemented yet, so this reporter always returns idle.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    }
+  ]
+}

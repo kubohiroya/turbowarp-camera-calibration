@@ -1,0 +1,76 @@
+{
+  "name": "@kubohiroya/turbowarp-camera-calibration",
+  "version": "0.1.0",
+  "description": "A TurboWarp extension that calibrates a shared Camera Source camera and publishes its intrinsic calibration profile.",
+  "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
+  "license": "MPL-2.0",
+  "homepage": "https://kubohiroya.github.io/turbowarp-camera-calibration/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kubohiroya/turbowarp-camera-calibration.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kubohiroya/turbowarp-camera-calibration/issues"
+  },
+  "keywords": [
+    "turbowarp",
+    "scratch",
+    "extension",
+    "camera",
+    "calibration",
+    "intrinsics",
+    "camera-source",
+    "vite",
+    "typescript"
+  ],
+  "type": "module",
+  "exports": {
+    "./camera-calibration.js": "./dist/camera-calibration.js",
+    "./package.json": "./package.json"
+  },
+  "unpkg": "./dist/camera-calibration.js",
+  "jsdelivr": "./dist/camera-calibration.js",
+  "files": [
+    "dist/",
+    "docs/",
+    "schemas/",
+    "src/",
+    "templates/",
+    "README.md",
+    "README.ja.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "lint": "eslint src tests scripts vite.config.ts",
+    "test": "vitest run",
+    "docs": "node scripts/generate-readme.ts",
+    "docs:check": "pnpm run docs && git diff --exit-code -- README.md",
+    "template:readme": "node scripts/apply-readme-template.ts",
+    "repo:check": "node scripts/check-repo.ts",
+    "pack:check": "npm pack --dry-run --ignore-scripts",
+    "release:check": "pnpm publish --dry-run --access public --no-git-checks",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run docs:check && pnpm run check:dist && pnpm run repo:check && pnpm run pack:check",
+    "check:dist": "pnpm run build && node scripts/check-dist.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@kubohiroya/vite-plugin-turbowarp-extension": "0.4.0",
+    "@types/node": "^24.13.3",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.66.0",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  }
+}

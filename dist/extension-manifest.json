@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "id": "kubohiroyacameracalibration",
+  "blocks": [
+    {
+      "opcode": "cameraCalibrationState",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    }
+  ],
+  "menus": []
+}
