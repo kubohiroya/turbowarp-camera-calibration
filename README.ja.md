@@ -212,7 +212,7 @@ block referenceは
 |---|---|
 | 校正flagがOFF | 状態reporterだけを提供して`idle`を返します。commandは明示的なエラーで拒否します |
 | Camera Sourceが未読込み | `dependency-missing`。自分でカメラを開くことはありません |
-| Camera Sourceにプロファイル登録APIが無い、または契約versionが異なる | publish時に`api-version-mismatch`。暗黙の成功扱いをしません |
+| Camera Sourceにプロファイル登録APIが無い、または契約versionが異なる | publish時に`api-version-mismatch`。暗黙の成功扱いをせず、solve済みプロファイルは保持します |
 | 校正を実行していない | 状態reporterは`idle`、プロファイルreporterは空文字列を返します |
 | 板が見つからない、ぶれている、既存サンプルと似すぎている | 固有のエラーコードで却下し、セッションはready のままです |
 | セッション中に解像度・device・左右反転が変わった | `resolution-mismatch` または `capture-condition-mismatch` |
@@ -220,7 +220,7 @@ block referenceは
 | 別のカメラ、または別の撮影サイズのプロファイル | 状態を変更する前に`calibration-not-applicable`で拒否します |
 | solve成功 | ただちにカメラのleaseを解放します |
 | project停止・project再読込・runtime破棄 | すべてのセッションを取り消し、すべてのleaseを解放します |
-| 無効な入力 | セッション状態を変更する前に拒否します |
+| 無効な入力 | セッション状態を変更する前に拒否します。boardを打ち間違えた再開始も、実行中のセッションを壊しません |
 
 共有カメラごとにセッション、プロファイル、診断を分けて保持します。あるカメラの
 cancelが、別のカメラのleaseを解放したり、同じ共有カメラの他の利用者を止めたり

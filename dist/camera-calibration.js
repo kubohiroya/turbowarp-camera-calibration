@@ -545,6 +545,12 @@
   var MAXIMUM_SAMPLES = 40;
   var MINIMUM_SAMPLE_QUALITY = .2;
   var MINIMUM_NORMALIZED_NOVELTY = .015;
+  /** Codes a profile validation can produce, and therefore can clear. */
+  var PROFILE_ERROR_CODES = /* @__PURE__ */ new Set([
+  	"invalid-calibration",
+  	"credential-forbidden",
+  	"calibration-not-applicable"
+  ]);
   /**
   * One camera's calibration. Every shared camera gets its own instance so that
   * calibrating one camera never disturbs another camera's session or lease.
@@ -565,13 +571,22 @@
   		this.operation = 0;
   	}
   	async start(options) {
-  		await this.cancel();
   		let normalized;
   		try {
   			normalized = normalizeStartOptions(options);
   		} catch (error) {
-  			this.fail("invalid-board", error);
+  			this.refuse("invalid-board", error instanceof Error ? error.message : String(error));
   		}
+  		await this.cancel();
+  		const acquiring = this.acquireSession(normalized);
+  		this.acquiring = acquiring;
+  		const clear = () => {
+  			if (this.acquiring === acquiring) this.acquiring = void 0;
+  		};
+  		acquiring.then(clear, clear);
+  		await acquiring;
+  	}
+  	async acquireSession(normalized) {
   		const operation = ++this.operation;
   		this.calibrationState = "acquiring-camera";
   		this.clearError();
@@ -636,8 +651,12 @@
   	}
   	async cancel() {
   		this.operation += 1;
-  		if (this.lease || this.sampling || this.solving) this.calibrationState = "cancelling";
-  		const pending = [this.sampling, this.solving].filter(isPromise);
+  		if (this.lease || this.acquiring || this.sampling || this.solving) this.calibrationState = "cancelling";
+  		const pending = [
+  			this.acquiring,
+  			this.sampling,
+  			this.solving
+  		].filter(isPromise);
   		const lease = this.lease;
   		this.lease = void 0;
   		this.session = void 0;
@@ -673,7 +692,7 @@
   	validateProfile(json) {
   		try {
   			parseCalibrationProfile(json);
-  			this.clearError();
+  			if (PROFILE_ERROR_CODES.has(this.calibrationErrorCode)) this.clearError();
   			return true;
   		} catch (error) {
   			this.recordError(errorCodeFor(error), error);
@@ -683,17 +702,17 @@
   	/** Hands the solved profile to Camera Source, which owns the contract. */
   	async publishProfile() {
   		const profile = this.profile;
-  		if (!profile) this.reject("not-calibrated", `Camera ${this.cameraId} has no calibration profile to publish.`);
+  		if (!profile) this.refuse("not-calibrated", `Camera ${this.cameraId} has no calibration profile to publish.`);
   		let registry;
   		try {
   			registry = requireProfileRegistry(this.runtime);
   		} catch (error) {
-  			this.fail(errorCodeFor(error), error);
+  			this.refuseWith(errorCodeFor(error), error);
   		}
   		try {
   			await registry.registerCalibrationProfile(profile);
   		} catch (error) {
-  			this.fail("publish-failed", error);
+  			this.refuseWith("publish-failed", error);
   		}
   		this.clearError();
   	}
@@ -816,11 +835,20 @@
   		this.samples = [];
   		await lease?.release();
   	}
+  	/** Refuses a session step and returns the live session to `ready`. */
   	reject(code, message) {
+  		if (this.calibrationState !== "ready" && this.lease) this.calibrationState = "ready";
+  		this.refuse(code, message);
+  	}
+  	/** Records why an operation was refused, without touching the state. */
+  	refuse(code, message) {
   		this.calibrationErrorCode = code;
   		this.calibrationErrorMessage = `${code}: ${message}`;
-  		if (this.calibrationState !== "ready") this.calibrationState = this.lease ? "ready" : this.calibrationState;
   		throw new Error(this.calibrationErrorMessage);
+  	}
+  	refuseWith(code, cause) {
+  		this.recordError(code, cause);
+  		throw new Error(this.calibrationErrorMessage, { cause });
   	}
   	fail(code, cause) {
   		this.calibrationState = "error";
@@ -829,8 +857,7 @@
   	}
   	/** Reports a rejected profile without disturbing the session or the state. */
   	failValidation(error) {
-  		this.recordError(errorCodeFor(error), error);
-  		throw new Error(this.calibrationErrorMessage, { cause: error });
+  		this.refuseWith(errorCodeFor(error), error);
   	}
   	recordError(code, cause) {
   		const detail = cause instanceof Error ? cause.message : String(cause);
@@ -914,13 +941,14 @@
   		return this.existing(cameraId)?.profileJson() ?? "";
   	}
   	existing(cameraId) {
-  		return this.cameras.get(cameraId);
+  		return this.cameras.get(cameraId.trim());
   	}
   	camera(cameraId) {
-  		const existing = this.cameras.get(cameraId);
+  		const key = cameraId.trim();
+  		const existing = this.cameras.get(key);
   		if (existing) return existing;
-  		const created = new CameraCalibration(cameraId, this.runtime, () => this.resolveBackend(), this.nowMilliseconds);
-  		this.cameras.set(cameraId, created);
+  		const created = new CameraCalibration(key, this.runtime, () => this.resolveBackend(), this.nowMilliseconds);
+  		this.cameras.set(key, created);
   		return created;
   	}
   	/** Creates the solver once, on the first sample or solve of any camera. */

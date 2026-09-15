@@ -138,7 +138,10 @@ needed, never cached at load time.
 | No profile has been solved or imported | `not-calibrated` |
 | The registry rejected the profile | `publish-failed` |
 
-None of these is treated as success.
+None of these is treated as success, and none of them rewrites the calibration
+state. Publishing is not a session operation: a solved profile that Camera
+Source could not accept is still solved, and a session that already failed is
+not repaired by asking to publish.
 
 ## Feature flag
 

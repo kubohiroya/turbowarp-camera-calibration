@@ -308,6 +308,92 @@ describe('CameraCalibrationController', () => {
     expect(ended.release).toHaveBeenCalledOnce();
   });
 
+  it('keeps a running session when the board arguments are invalid', async () => {
+    const {controller, release} = setup();
+    await controller.start(startOptions);
+    await controller.addSample('camera-1');
+    await expect(
+      controller.start({...startOptions, board: {...startOptions.board, columns: 2}})
+    ).rejects.toThrow(/invalid-board/u);
+    // The session the caller already built must survive a mistyped restart.
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.sampleCount('camera-1')).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('releases a lease acquired by a start that a cancel raced', async () => {
+    const {controller, acquireCamera, lease, release} = setup();
+    let finish: ((value: CameraLeasePort) => void) | undefined;
+    acquireCamera.mockImplementation(
+      () =>
+        new Promise<CameraLeasePort>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const starting = controller.start(startOptions);
+    await flushMicrotasks();
+    let cancelled = false;
+    const cancelling = controller.cancelAll().then(() => {
+      cancelled = true;
+    });
+    await flushMicrotasks();
+    // Cancel is a barrier: it cannot report every lease released while an
+    // acquisition it raced is still in flight.
+    expect(cancelled).toBe(false);
+    finish?.(lease);
+    await cancelling;
+    expect(release).toHaveBeenCalledOnce();
+    await starting;
+    expect(controller.state('camera-1')).toBe('idle');
+  });
+
+  it('does not repair a failed session by asking to publish', async () => {
+    const {controller, captureSample} = setup();
+    captureSample.mockRejectedValue(new Error('the solver crashed'));
+    await controller.start(startOptions);
+    await expect(controller.addSample('camera-1')).rejects.toThrow(/sample-failed/u);
+    expect(controller.state('camera-1')).toBe('error');
+    await expect(controller.publishProfile('camera-1')).rejects.toThrow(/not-calibrated/u);
+    expect(controller.state('camera-1')).toBe('error');
+    expect(controller.ready('camera-1')).toBe(false);
+  });
+
+  it('keeps a solved profile when the publication is refused', async () => {
+    const {controller, cameraSource} = setup();
+    await controller.start(startOptions);
+    await fillSamples(controller);
+    await controller.solve('camera-1');
+    cameraSource.calibrationApiVersion = 2;
+    await expect(controller.publishProfile('camera-1')).rejects.toThrow(/api-version-mismatch/u);
+    // Camera Source could not accept it, but the calibration is still solved.
+    expect(controller.state('camera-1')).toBe('solved');
+    expect(controller.profileJson('camera-1')).not.toBe('');
+  });
+
+  it('keeps a session diagnostic when some other profile validates', async () => {
+    const {controller, solve} = setup();
+    solve.mockResolvedValue({
+      intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
+      distortionModel: 'none',
+      distortionCoefficients: [],
+      reprojectionErrorPx: 2
+    });
+    await controller.start(startOptions);
+    await fillSamples(controller);
+    await expect(controller.solve('camera-1')).rejects.toThrow(/reprojection-too-high/u);
+    expect(controller.validateProfile('camera-1', await fixture('valid-camera-intrinsics-v1.json'))).toBe(
+      true
+    );
+    expect(controller.errorCode('camera-1')).toBe('reprojection-too-high');
+  });
+
+  it('keys a camera by its trimmed identifier', async () => {
+    const {controller} = setup();
+    await controller.importProfile('  camera-1  ', await fixture('valid-camera-intrinsics-v1.json'));
+    expect(controller.state('camera-1')).toBe('solved');
+    expect(controller.profileJson('camera-1')).not.toBe('');
+  });
+
   it('imports, exports, validates, and cleans profiles', async () => {
     const {controller} = setup();
     const valid = await fixture('valid-camera-intrinsics-v1.json');

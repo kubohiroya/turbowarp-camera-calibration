@@ -24,6 +24,13 @@ const MAXIMUM_SAMPLES = 40;
 const MINIMUM_SAMPLE_QUALITY = 0.2;
 const MINIMUM_NORMALIZED_NOVELTY = 0.015;
 
+/** Codes a profile validation can produce, and therefore can clear. */
+const PROFILE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'invalid-calibration',
+  'credential-forbidden',
+  'calibration-not-applicable'
+]);
+
 export type CalibrationState =
   | 'idle'
   | 'acquiring-camera'
@@ -88,6 +95,7 @@ class CameraCalibration {
   private session: CalibrationSession | undefined;
   private lease: CameraLeasePort | undefined;
   private samples: CalibrationSample[] = [];
+  private acquiring: Promise<void> | undefined;
   private sampling: Promise<void> | undefined;
   private solving: Promise<void> | undefined;
   private profile: CameraIntrinsicsV1 | undefined;
@@ -107,13 +115,25 @@ class CameraCalibration {
   ) {}
 
   public async start(options: CalibrationStartOptions): Promise<void> {
-    await this.cancel();
+    // Validate before cancelling. A mistyped board must not cost the caller the
+    // session and the samples it already collected.
     let normalized: CalibrationStartOptions;
     try {
       normalized = normalizeStartOptions(options);
     } catch (error) {
-      this.fail('invalid-board', error);
+      this.refuse('invalid-board', error instanceof Error ? error.message : String(error));
     }
+    await this.cancel();
+    const acquiring = this.acquireSession(normalized);
+    this.acquiring = acquiring;
+    const clear = () => {
+      if (this.acquiring === acquiring) this.acquiring = undefined;
+    };
+    void acquiring.then(clear, clear);
+    await acquiring;
+  }
+
+  private async acquireSession(normalized: CalibrationStartOptions): Promise<void> {
     const operation = ++this.operation;
     this.calibrationState = 'acquiring-camera';
     this.clearError();
@@ -192,8 +212,12 @@ class CameraCalibration {
 
   public async cancel(): Promise<void> {
     this.operation += 1;
-    if (this.lease || this.sampling || this.solving) this.calibrationState = 'cancelling';
-    const pending = [this.sampling, this.solving].filter(isPromise);
+    if (this.lease || this.acquiring || this.sampling || this.solving) {
+      this.calibrationState = 'cancelling';
+    }
+    // The acquisition is awaited too, so that a start racing this cancel has
+    // handed its lease back by the time cancel resolves.
+    const pending = [this.acquiring, this.sampling, this.solving].filter(isPromise);
     const lease = this.lease;
     this.lease = undefined;
     this.session = undefined;
@@ -247,7 +271,10 @@ class CameraCalibration {
   public validateProfile(json: string): boolean {
     try {
       parseCalibrationProfile(json);
-      this.clearError();
+      // Only a previous validation failure is answered here. A session
+      // diagnostic, such as a refused solve, is not resolved by some other
+      // JSON turning out to be valid.
+      if (PROFILE_ERROR_CODES.has(this.calibrationErrorCode)) this.clearError();
       return true;
     } catch (error) {
       this.recordError(errorCodeFor(error), error);
@@ -258,19 +285,23 @@ class CameraCalibration {
   /** Hands the solved profile to Camera Source, which owns the contract. */
   public async publishProfile(): Promise<void> {
     const profile = this.profile;
+    // Publishing is not a session operation. A refused publication records its
+    // code and leaves the calibration state alone: a solved profile that Camera
+    // Source could not accept is still solved, and a session that already
+    // failed is not repaired by asking to publish.
     if (!profile) {
-      this.reject('not-calibrated', `Camera ${this.cameraId} has no calibration profile to publish.`);
+      this.refuse('not-calibrated', `Camera ${this.cameraId} has no calibration profile to publish.`);
     }
     let registry;
     try {
       registry = requireProfileRegistry(this.runtime);
     } catch (error) {
-      this.fail(errorCodeFor(error), error);
+      this.refuseWith(errorCodeFor(error), error);
     }
     try {
       await registry.registerCalibrationProfile(profile);
     } catch (error) {
-      this.fail('publish-failed', error);
+      this.refuseWith('publish-failed', error);
     }
     this.clearError();
   }
@@ -444,13 +475,22 @@ class CameraCalibration {
     await lease?.release();
   }
 
+  /** Refuses a session step and returns the live session to `ready`. */
   private reject(code: CalibrationErrorCode, message: string): never {
+    if (this.calibrationState !== 'ready' && this.lease) this.calibrationState = 'ready';
+    this.refuse(code, message);
+  }
+
+  /** Records why an operation was refused, without touching the state. */
+  private refuse(code: CalibrationErrorCode, message: string): never {
     this.calibrationErrorCode = code;
     this.calibrationErrorMessage = `${code}: ${message}`;
-    if (this.calibrationState !== 'ready') {
-      this.calibrationState = this.lease ? 'ready' : this.calibrationState;
-    }
     throw new Error(this.calibrationErrorMessage);
+  }
+
+  private refuseWith(code: CalibrationErrorCode, cause: unknown): never {
+    this.recordError(code, cause);
+    throw new Error(this.calibrationErrorMessage, {cause});
   }
 
   private fail(code: CalibrationErrorCode, cause: unknown): never {
@@ -461,8 +501,7 @@ class CameraCalibration {
 
   /** Reports a rejected profile without disturbing the session or the state. */
   private failValidation(error: unknown): never {
-    this.recordError(errorCodeFor(error), error);
-    throw new Error(this.calibrationErrorMessage, {cause: error});
+    this.refuseWith(errorCodeFor(error), error);
   }
 
   private recordError(code: CalibrationErrorCode, cause: unknown): void {
@@ -574,19 +613,22 @@ export class CameraCalibrationController {
   }
 
   private existing(cameraId: string): CameraCalibration | undefined {
-    return this.cameras.get(cameraId);
+    return this.cameras.get(cameraId.trim());
   }
 
   private camera(cameraId: string): CameraCalibration {
-    const existing = this.cameras.get(cameraId);
+    // The lease and the published profile both use the trimmed identifier, so
+    // the record is keyed the same way rather than by whatever the caller typed.
+    const key = cameraId.trim();
+    const existing = this.cameras.get(key);
     if (existing) return existing;
     const created = new CameraCalibration(
-      cameraId,
+      key,
       this.runtime,
       () => this.resolveBackend(),
       this.nowMilliseconds
     );
-    this.cameras.set(cameraId, created);
+    this.cameras.set(key, created);
     return created;
   }
 

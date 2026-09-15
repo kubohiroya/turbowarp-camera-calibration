@@ -133,7 +133,10 @@ Camera Sourceのcapabilityは必要になった時点でruntimeから参照し�
 | solveもimportもしていない | `not-calibrated` |
 | 登録側がプロファイルを拒否した | `publish-failed` |
 
-いずれも成功として扱いません。
+いずれも成功として扱わず、いずれも校正状態を書き換えません。publishはセッション
+操作ではありません。Camera Sourceが受け取れなかったsolve済みプロファイルは
+solve済みのままであり、すでに失敗したセッションがpublish要求で回復することも
+ありません。
 
 ## feature flag
 

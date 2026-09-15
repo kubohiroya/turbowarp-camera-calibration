@@ -372,7 +372,7 @@ Exports the stored intrinsic profile for that camera, or an empty string when no
 |---|---|
 | Calibration flag is OFF | Only the state reporter is published and it returns `idle`; commands refuse with an explicit error |
 | Camera Source is not loaded | `dependency-missing`; the extension never opens its own camera |
-| Camera Source has no profile registry, or another contract version | `api-version-mismatch` on publish; never a silent success |
+| Camera Source has no profile registry, or another contract version | `api-version-mismatch` on publish; never a silent success, and the solved profile is kept |
 | Camera calibration has not run | The state reporter returns `idle` and the profile reporter returns an empty string |
 | Board not found, blurred, or too similar to a kept view | The sample is refused with its own error code and the session stays ready |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
@@ -380,7 +380,7 @@ Exports the stored intrinsic profile for that camera, or an empty string when no
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
 | Solve succeeds | The camera lease is released immediately |
 | Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released |
-| Invalid input | Rejected before any session state changes |
+| Invalid input | Rejected before any session state changes, including a restart with a mistyped board |
 
 Each shared camera has its own session, profile, and diagnostics. Cancelling one
 camera never releases another camera's lease or stops another consumer of the
