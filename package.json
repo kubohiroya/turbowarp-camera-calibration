@@ -38,7 +38,8 @@
     "templates/",
     "README.md",
     "README.ja.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "publishConfig": {
     "access": "public",
@@ -52,7 +53,7 @@
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "lint": "eslint src tests scripts vite.config.ts",
+    "lint": "eslint config src tests scripts vite.config.ts",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.ts",
     "docs:check": "pnpm run docs && git diff --exit-code -- README.md",
@@ -72,5 +73,8 @@
     "typescript-eslint": "^8.66.0",
     "vite": "^8.2.2",
     "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "@techstark/opencv-js": "4.12.0-release.1"
   }
 }

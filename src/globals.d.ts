@@ -2,6 +2,16 @@ interface TurboWarpExtension {
   getInfo(): Record<string, unknown>;
 }
 
+/**
+ * The TurboWarp VM runtime. Loaded extensions publish their capability objects
+ * on it under an `ext_<extension id>` key.
+ */
+interface TurboWarpRuntime extends Record<string, unknown> {
+  ext_kubohiroyacamerasource?: unknown;
+  on?: (event: string, listener: () => void) => void;
+  off?: (event: string, listener: () => void) => void;
+}
+
 interface ScratchTranslate {
   (text: string): string;
   (message: {default: string; description?: string}, placeholders?: Record<string, string | number>): string;
@@ -13,10 +23,7 @@ interface ScratchApi {
     register(extension: TurboWarpExtension): void;
   };
   vm: {
-    runtime: Record<string, unknown> & {
-      on?: (event: string, listener: () => void) => void;
-      off?: (event: string, listener: () => void) => void;
-    };
+    runtime: TurboWarpRuntime;
   };
   BlockType: Record<'COMMAND' | 'REPORTER' | 'BOOLEAN' | 'HAT', string>;
   ArgumentType: Record<'STRING' | 'NUMBER' | 'BOOLEAN', string>;

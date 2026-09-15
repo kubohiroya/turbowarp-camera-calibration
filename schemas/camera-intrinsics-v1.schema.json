@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kubohiroya.github.io/turbowarp-camera-calibration/schema/camera-intrinsics-v1.json",
+  "title": "Camera intrinsic calibration v1",
+  "description": "One camera's optics at one image size. Intrinsics only: this profile never carries an external world pose.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "calibrationId",
+    "cameraId",
+    "cameraModel",
+    "imageWidth",
+    "imageHeight",
+    "imageState",
+    "intrinsicMatrix",
+    "distortionModel",
+    "distortionCoefficients",
+    "calibratedAt"
+  ],
+  "properties": {
+    "schema": {"const": "camerasource/camera-intrinsics"},
+    "version": {"const": 1},
+    "calibrationId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
+    "cameraId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
+    "cameraModel": {"enum": ["pinhole"]},
+    "imageWidth": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "imageHeight": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "imageState": {
+      "enum": ["raw", "undistorted"],
+      "description": "raw means the coefficients still have to be applied; undistorted means the image is already corrected and they must not be applied again."
+    },
+    "intrinsicMatrix": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+      "description": "Row-major zero-skew pinhole matrix [fx, 0, cx, 0, fy, cy, 0, 0, 1] in pixels of the calibrated image size."
+    },
+    "distortionModel": {
+      "enum": [
+        "none",
+        "opencv-plumb-bob",
+        "opencv-rational",
+        "opencv-thin-prism",
+        "opencv-tilted"
+      ]
+    },
+    "distortionCoefficients": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 14,
+      "items": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+      "description": "Coefficients in OpenCV order. The count must match distortionModel: 0, 4 or 5, 8, 12, or 14."
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sampleCount", "reprojectionErrorPx"],
+      "properties": {
+        "sampleCount": {"type": "integer", "minimum": 0},
+        "reprojectionErrorPx": {"type": "number", "minimum": 0, "maximum": 1000000}
+      },
+      "description": "Absent when the producer of the profile did not measure it."
+    },
+    "calibratedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    }
+  }
+}

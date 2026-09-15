@@ -1,26 +1,39 @@
+import {featureFlags} from '../config/feature-flags.js';
 import {extensionConfig} from './config';
 import definitions from './block-definitions.json';
+import {CameraCalibrationController} from './calibration/controller.js';
+import {openCvBackendFactory} from './calibration/opencv-backend.js';
+import type {CalibrationBackendFactory} from './calibration/types.js';
 
 type BlockTypeName = 'COMMAND' | 'REPORTER' | 'BOOLEAN';
-type ArgumentTypeName = 'STRING';
+type ArgumentTypeName = 'STRING' | 'NUMBER';
+type BlockFeature = 'always' | 'cameraCalibrationV1';
 
 interface DefinitionArgument {
   type: ArgumentTypeName;
-  defaultValue: string;
+  defaultValue: string | number;
 }
 
 interface BlockDefinition {
   opcode: string;
+  feature: BlockFeature;
   blockType: BlockTypeName;
   text: string;
   description: string;
   arguments: Record<string, DefinitionArgument>;
 }
 
+export interface CameraCalibrationExtensionOptions {
+  runtime?: TurboWarpRuntime;
+  backend?: CalibrationBackendFactory;
+  enabled?: boolean;
+  nowMilliseconds?: () => number;
+}
+
 const blockDefinitions = definitions.blocks as readonly BlockDefinition[];
 const defaultCameraId = 'default';
 
-/** The state reported before any calibration session exists. */
+/** The state reported for a camera that has no calibration session. */
 export const IDLE_CALIBRATION_STATE = 'idle';
 
 function normalizeId(value: unknown, fallback = defaultCameraId): string {
@@ -29,21 +42,160 @@ function normalizeId(value: unknown, fallback = defaultCameraId): string {
 }
 
 export class CameraCalibrationExtension implements TurboWarpExtension {
+  private readonly controller: CameraCalibrationController;
+  private readonly runtime: TurboWarpRuntime;
+  private readonly enabled: boolean;
+
+  public constructor(options: CameraCalibrationExtensionOptions = {}) {
+    this.runtime = options.runtime ?? Scratch.vm.runtime;
+    this.enabled = options.enabled ?? featureFlags.cameraCalibrationV1;
+    const nowMilliseconds = options.nowMilliseconds;
+    this.controller = new CameraCalibrationController({
+      runtime: this.runtime,
+      backend: options.backend ?? openCvBackendFactory,
+      ...(nowMilliseconds ? {nowMilliseconds} : {})
+    });
+    this.runtime.on?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
+    this.runtime.on?.('PROJECT_LOADED', this.handleProjectBoundary);
+    this.runtime.on?.('RUNTIME_DISPOSED', this.handleDisposed);
+  }
+
   public getInfo(): Record<string, unknown> {
     return {
       id: extensionConfig.id,
       name: Scratch.translate(definitions.extensionName),
       docsURI: extensionConfig.docsURI,
       blockIconURI: extensionConfig.blockIconURI,
-      blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
+      blocks: blockDefinitions
+        .filter((block) => this.blockEnabled(block.feature))
+        .map((block) => this.toScratchBlock(block))
     };
   }
 
+  public async startCameraCalibration(args: {
+    CAMERA_ID: unknown;
+    CALIBRATION_ID: unknown;
+    COLUMNS: unknown;
+    ROWS: unknown;
+    SQUARE_METERS: unknown;
+    MAX_ERROR_PX: unknown;
+  }): Promise<void> {
+    this.requireEnabled();
+    await this.controller.start({
+      cameraId: normalizeId(args.CAMERA_ID),
+      calibrationId: Scratch.Cast.toString(args.CALIBRATION_ID).trim(),
+      board: {
+        columns: Scratch.Cast.toNumber(args.COLUMNS),
+        rows: Scratch.Cast.toNumber(args.ROWS),
+        squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS)
+      },
+      maximumReprojectionErrorPx: Scratch.Cast.toNumber(args.MAX_ERROR_PX)
+    });
+  }
+
+  public async addCameraCalibrationSample(args: {CAMERA_ID: unknown}): Promise<void> {
+    this.requireEnabled();
+    await this.controller.addSample(normalizeId(args.CAMERA_ID));
+  }
+
+  public async solveCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
+    this.requireEnabled();
+    await this.controller.solve(normalizeId(args.CAMERA_ID));
+  }
+
+  public async cancelCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
+    await this.controller.cancel(normalizeId(args.CAMERA_ID));
+  }
+
+  public async cleanupCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
+    await this.controller.cleanup(normalizeId(args.CAMERA_ID));
+  }
+
+  public async publishCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
+    this.requireEnabled();
+    await this.controller.publishProfile(normalizeId(args.CAMERA_ID));
+  }
+
+  public async importCameraCalibration(args: {
+    JSON: unknown;
+    CAMERA_ID: unknown;
+  }): Promise<void> {
+    this.requireEnabled();
+    await this.controller.importProfile(
+      normalizeId(args.CAMERA_ID),
+      Scratch.Cast.toString(args.JSON)
+    );
+  }
+
+  public cameraCalibrationJsonValid(args: {JSON: unknown; CAMERA_ID: unknown}): boolean {
+    if (!this.enabled) return false;
+    return this.controller.validateProfile(
+      normalizeId(args.CAMERA_ID),
+      Scratch.Cast.toString(args.JSON)
+    );
+  }
+
+  public cameraCalibrationReady(args: {CAMERA_ID: unknown}): boolean {
+    return this.enabled && this.controller.ready(normalizeId(args.CAMERA_ID));
+  }
+
   public cameraCalibrationState(args: {CAMERA_ID?: unknown} = {}): string {
-    // The calibration session is not implemented yet. Every camera reports idle
-    // so that a project can branch on the state before the procedure lands.
-    void normalizeId(args.CAMERA_ID);
-    return IDLE_CALIBRATION_STATE;
+    if (!this.enabled) return IDLE_CALIBRATION_STATE;
+    return this.controller.state(normalizeId(args.CAMERA_ID));
+  }
+
+  public cameraCalibrationBackend(): string {
+    return this.enabled ? this.controller.backend() : '';
+  }
+
+  public cameraCalibrationSampleCount(args: {CAMERA_ID: unknown}): number {
+    return this.enabled ? this.controller.sampleCount(normalizeId(args.CAMERA_ID)) : 0;
+  }
+
+  public cameraCalibrationSampleQuality(args: {CAMERA_ID: unknown}): number {
+    return this.enabled ? this.controller.latestSampleQuality(normalizeId(args.CAMERA_ID)) : 0;
+  }
+
+  public cameraCalibrationReprojectionError(args: {CAMERA_ID: unknown}): number {
+    return this.enabled
+      ? this.controller.latestReprojectionError(normalizeId(args.CAMERA_ID))
+      : 0;
+  }
+
+  public cameraCalibrationErrorCode(args: {CAMERA_ID: unknown}): string {
+    return this.enabled ? this.controller.errorCode(normalizeId(args.CAMERA_ID)) : '';
+  }
+
+  public cameraCalibrationError(args: {CAMERA_ID: unknown}): string {
+    return this.enabled ? this.controller.errorMessage(normalizeId(args.CAMERA_ID)) : '';
+  }
+
+  public cameraCalibrationJson(args: {CAMERA_ID: unknown}): string {
+    return this.enabled ? this.controller.profileJson(normalizeId(args.CAMERA_ID)) : '';
+  }
+
+  /** Releases every camera lease when the project stops or is replaced. */
+  private readonly handleProjectBoundary = (): void => {
+    void this.controller.cancelAll();
+  };
+
+  private readonly handleDisposed = (): void => {
+    this.runtime.off?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
+    this.runtime.off?.('PROJECT_LOADED', this.handleProjectBoundary);
+    this.runtime.off?.('RUNTIME_DISPOSED', this.handleDisposed);
+    void this.controller.cleanupAll();
+  };
+
+  private blockEnabled(feature: BlockFeature): boolean {
+    return feature === 'always' || this.enabled;
+  }
+
+  private requireEnabled(): void {
+    if (!this.enabled) {
+      throw new Error(
+        'Camera calibration v1 is disabled. Enable it before the project starts.'
+      );
+    }
   }
 
   private toScratchBlock(block: BlockDefinition): Record<string, unknown> {

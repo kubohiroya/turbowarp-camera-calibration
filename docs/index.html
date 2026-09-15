@@ -16,19 +16,89 @@
   <h1>TurboWarp-Camera-Calibration</h1>
   <p>Calibrate a camera shared through TurboWarp-Camera-Source and publish its intrinsic calibration profile.</p>
 
-  <p><strong>Status:</strong> this repository currently contains the project scaffold only. The calibration procedure is not implemented yet.</p>
+  <p><strong>Status:</strong> the calibration path ships behind a startup feature flag that defaults to OFF. With the flag OFF the extension publishes only the state reporter, which answers <code>idle</code>.</p>
 
   <h2>Requirements</h2>
   <ul>
     <li>TurboWarp Desktop, Web, or Packager.</li>
     <li><code>@kubohiroya/turbowarp-camera-source</code> loaded first. This extension never opens a camera itself.</li>
-    <li>A printed chessboard calibration target.</li>
+    <li>A printed chessboard calibration target, flat and unglossy. The block arguments count <strong>inner corners</strong>, not printed squares: a 10&times;7 square board is <code>9</code> by <code>6</code>.</li>
     <li>The extension must run without the sandbox.</li>
   </ul>
 
+  <h2>Enabling calibration</h2>
+  <p>Set the override before the extension is registered. The flags are read once and frozen.</p>
+  <pre><code>globalThis.__TWCC_FEATURE_FLAGS__ = {cameraCalibrationV1: true};</code></pre>
+
+  <h2>Calibrating a camera</h2>
+  <pre><code>start shared camera [default]
+start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m max error [1.5] px
+repeat until &lt;camera [default] calibration sample count = 12&gt;
+  add calibration sample for camera [default]
+solve calibration for camera [default]
+publish calibration profile for camera [default]</code></pre>
+  <p>Each shared camera has its own session, profile, and diagnostics. Cancelling one camera never stops another consumer of the same shared camera.</p>
+
+  <h3>Getting a usable result</h3>
+  <table>
+    <tr><th>Do this</th><th>Why</th></tr>
+    <tr><td>Capture at least 8 accepted samples, at most 40</td><td>Fewer views leave the distortion terms under-determined</td></tr>
+    <tr><td>Vary the board angle by roughly 20&deg;&ndash;45&deg; across samples</td><td>Views that are all fronto-parallel cannot separate focal length from distance</td></tr>
+    <tr><td>Vary the distance and fill different parts of the frame, including the corners</td><td>Distortion is strongest away from the image center</td></tr>
+    <tr><td>Keep the whole board inside the frame and in focus</td><td>A partially visible or blurred board is refused</td></tr>
+    <tr><td>Do not change resolution, camera device, mirroring, focus, or zoom during a session</td><td>The session is fixed to the resolution it started with</td></tr>
+  </table>
+  <p>Verify a finished calibration against images that were not part of the solve. A low reprojection error on the calibration samples alone does not prove the result generalizes.</p>
+
   <h2>Blocks</h2>
-  <h3><code>camera calibration state [CAMERA_ID]</code></h3>
-  <p>Returns the calibration session state for one shared Camera Source camera. The calibration procedure is not implemented yet, so this reporter always returns <code>idle</code>.</p>
+  <table>
+    <tr><th>Block</th><th>Type</th><th>Does</th></tr>
+    <tr><td><code>start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m max error [MAX_ERROR_PX] px</code></td><td>Command</td><td>Leases one shared camera and fixes its real capture resolution for a session</td></tr>
+    <tr><td><code>add calibration sample for camera [CAMERA_ID]</code></td><td>Command</td><td>Detects the complete board in the current frame and keeps it when quality and novelty pass</td></tr>
+    <tr><td><code>solve calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Solves the intrinsics from at least eight samples and releases the lease</td></tr>
+    <tr><td><code>cancel calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Releases the lease and the samples, keeping the last validated profile</td></tr>
+    <tr><td><code>cleanup calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Also clears the in-memory profile for that camera</td></tr>
+    <tr><td><code>publish calibration profile for camera [CAMERA_ID]</code></td><td>Command</td><td>Registers the profile with Camera Source, which owns the contract</td></tr>
+    <tr><td><code>import calibration profile [JSON] for camera [CAMERA_ID]</code></td><td>Command</td><td>Imports a profile after schema, credential, and applicability checks</td></tr>
+    <tr><td><code>calibration profile [JSON] valid for camera [CAMERA_ID]?</code></td><td>Boolean</td><td>Validates a profile without replacing the stored one</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration ready?</code></td><td>Boolean</td><td>Whether the session can accept a sample or a solve</td></tr>
+    <tr><td><code>camera calibration state [CAMERA_ID]</code></td><td>Reporter</td><td><code>idle</code>, <code>acquiring-camera</code>, <code>sampling</code>, <code>ready</code>, <code>solving</code>, <code>solved</code>, <code>cancelling</code>, or <code>error</code></td></tr>
+    <tr><td><code>camera calibration backend</code></td><td>Reporter</td><td>The pinned solver identifier</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration sample count</code></td><td>Reporter</td><td>Accepted samples in the current or last solved session</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration sample quality</code></td><td>Reporter</td><td>The latest accepted sample's score, from zero to one</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration reprojection error px</code></td><td>Reporter</td><td>RMS reprojection error of the latest solve or imported profile</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration error code</code></td><td>Reporter</td><td>A stable code, or an empty string</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration error</code></td><td>Reporter</td><td>The detailed diagnostic</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration profile JSON</code></td><td>Reporter</td><td>The stored intrinsic profile, or an empty string</td></tr>
+  </table>
+
+  <h2>Error codes</h2>
+  <table>
+    <tr><th>Code</th><th>Meaning</th></tr>
+    <tr><td><code>dependency-missing</code></td><td>Camera Source is not loaded</td></tr>
+    <tr><td><code>api-version-mismatch</code></td><td>Camera Source has no profile registry, or speaks another contract version</td></tr>
+    <tr><td><code>invalid-board</code></td><td>The board size, square size, or error limit is out of range</td></tr>
+    <tr><td><code>camera-unavailable</code></td><td>Camera Source refused the lease</td></tr>
+    <tr><td><code>camera-ended</code></td><td>The camera stopped or the device disappeared</td></tr>
+    <tr><td><code>resolution-mismatch</code></td><td>The capture resolution changed after the session started</td></tr>
+    <tr><td><code>capture-condition-mismatch</code></td><td>The camera device or mirroring changed after the session started</td></tr>
+    <tr><td><code>board-not-found</code></td><td>The complete chessboard was not visible</td></tr>
+    <tr><td><code>sample-low-quality</code></td><td>The board was too small in frame, or too blurred</td></tr>
+    <tr><td><code>sample-too-similar</code></td><td>The view is too close to one already kept</td></tr>
+    <tr><td><code>sample-limit</code></td><td>Forty samples are already retained</td></tr>
+    <tr><td><code>sample-insufficient</code></td><td>Fewer than eight samples have been accepted</td></tr>
+    <tr><td><code>sample-failed</code>, <code>solve-failed</code></td><td>The solver itself failed</td></tr>
+    <tr><td><code>reprojection-too-high</code></td><td>The solve exceeded the session's error limit</td></tr>
+    <tr><td><code>invalid-calibration</code></td><td>The profile does not match the schema</td></tr>
+    <tr><td><code>credential-forbidden</code></td><td>The profile carries a pairing credential</td></tr>
+    <tr><td><code>calibration-not-applicable</code></td><td>The profile belongs to another camera or another capture size</td></tr>
+    <tr><td><code>not-calibrated</code></td><td>There is no profile to publish</td></tr>
+    <tr><td><code>publish-failed</code></td><td>Camera Source rejected the profile</td></tr>
+  </table>
+
+  <h2>The calibration profile</h2>
+  <p>The profile is intrinsics only: an intrinsic matrix, a distortion model and its coefficients, the calibrated image size, and when it was measured. It never carries a world pose, and a pose that was not measured is never filled in with identity. Preview mirroring is a display concern; profile coordinates are always the unmirrored capture coordinates.</p>
+  <p>Profiles written by <code>@kubohiroya/turbowarp-realtime-motion-capture</code> are accepted on import; their world pose is dropped rather than reinterpreted.</p>
 
   <h2>How the packages divide the work</h2>
   <table>
@@ -45,7 +115,7 @@
   <p>The OpenCV build needed to solve a calibration is roughly 10 MB, and a TurboWarp extension ships as a single standalone bundle. Keeping the solver in its own extension lets Camera Source stay small enough for every camera consumer to load.</p>
 
   <h2>Safety</h2>
-  <p>Calibration reads camera frames only to detect the chessboard target. Load unsandboxed extension code only from a source you trust.</p>
+  <p>Calibration reads camera frames only to detect the chessboard target. Nothing is uploaded. A profile that carries a pairing credential is rejected rather than stored. Load unsandboxed extension code only from a source you trust.</p>
 
   <h2>Development</h2>
   <p>See the repository README and architecture documentation for build, test, release, and compatibility details.</p>

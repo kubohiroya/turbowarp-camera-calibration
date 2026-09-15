@@ -3,12 +3,195 @@
   "id": "kubohiroyacameracalibration",
   "blocks": [
     {
+      "opcode": "addCameraCalibrationSample",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationBackend",
+      "blockType": "REPORTER",
+      "arguments": []
+    },
+    {
+      "opcode": "cameraCalibrationError",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationErrorCode",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationJson",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationJsonValid",
+      "blockType": "BOOLEAN",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        },
+        {
+          "id": "JSON",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationReady",
+      "blockType": "BOOLEAN",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationReprojectionError",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationSampleCount",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationSampleQuality",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cameraCalibrationState",
       "blockType": "REPORTER",
       "arguments": [
         {
           "id": "CAMERA_ID",
           "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cancelCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cleanupCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "importCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        },
+        {
+          "id": "JSON",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "publishCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "solveCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "startCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CALIBRATION_ID",
+          "type": "STRING"
+        },
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        },
+        {
+          "id": "COLUMNS",
+          "type": "NUMBER"
+        },
+        {
+          "id": "MAX_ERROR_PX",
+          "type": "NUMBER"
+        },
+        {
+          "id": "ROWS",
+          "type": "NUMBER"
+        },
+        {
+          "id": "SQUARE_METERS",
+          "type": "NUMBER"
         }
       ]
     }

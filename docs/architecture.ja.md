@@ -59,18 +59,89 @@ block、argument、menuはserialize前に識別子で整列します。text、de
 既定値、静的menu項目は、保存済みprojectのAPI参照を identify しないため意図的に
 除外します。
 
-## 予定している校正の流れ
+## moduleの構成
 
-未実装です。設計は移設Issueが所有します。
+```text
+config/feature-flags.ts          起動時固定のflag。校正は既定OFF
+src/calibration/types.ts         board、sample、solve結果、backendの継ぎ目
+src/calibration/profile.ts       内部校正プロファイル、その検証、旧形式のadapter
+src/calibration/camera-source.ts Camera Source capabilityのclient
+src/calibration/controller.ts    共有カメラ1台ごとのセッション
+src/calibration/opencv-backend.ts 固定versionのOpenCV solver。初回利用時に生成
+src/extension.ts                 blockの結線とruntimeのライフサイクル
+```
 
-1. 1つの`cameraId`についてCamera Sourceからleaseを取得し、撮影解像度を固定する。
-2. チェスボードのサンプルを収集し、品質の低い視点と類似しすぎる視点を拒否する。
-3. 内部行列と歪み係数を求め、再投影誤差を検査する。
+OpenCVに触れるのは`opencv-backend.ts`だけで、controllerは
+`CalibrationBackendFactory`越しにのみ到達します。testはmock backendで手順全体を
+動かすため、solverは必要な場所だけで動きます。
+
+## 校正の流れ
+
+1. 1つの`cameraId`についてCamera Sourceからleaseを取得し、その時点の解像度・device・左右反転にセッションを固定する。
+2. チェスボードのサンプルを収集し、品質の低い視点と類似しすぎる視点を拒否する。保持するのは8枚以上40枚以下。
+3. 内部行列と歪み係数を求め、RMS再投影誤差をセッションの上限と比較する。
 4. 得られた内部プロファイルをCamera Sourceのプロファイル契約経由で提供する。
-5. solve、cancel、project停止、project再読込でleaseを解放する。
+5. solve、cancel、cleanup、device喪失、project停止、project再読込、runtime破棄でleaseを解放する。
 
 内部校正と外部姿勢は分離したままにします。この機能拡張はworld姿勢を提供せず、
-提供されていない姿勢をidentityで代用することもありません。
+提供されていない姿勢をidentityで代用することもありません。`calibrateCamera`は
+視点ごとの回転と並進も返しますが、それはboardの位置であってカメラの位置では
+ないため、姿勢として提供せず破棄します。
+
+## 共有カメラ1台ごとのセッション
+
+`CameraCalibrationController`は`cameraId`ごとに`CameraCalibration`を保持します。
+各instanceが自分のlease、サンプル、プロファイル、診断を所有します。あるカメラの
+cancelやcleanupが別のカメラのleaseを解放することはなく、Camera Sourceは元の
+カメラを他の利用者と共有し続けます。
+
+非同期の各段階はセッションの操作世代を持ち回ります。cancelはこれを進めるため、
+その後に解決したサンプルやsolveは、状態を書かずに、またcancelが引き取った
+leaseを二重に解放せずに終了します。遅い応答が取り消し済みセッションを復活させたり、
+共有leaseを壊したりしないのはこのためです。
+
+## プロファイル契約
+
+公開するプロファイルは
+`schemas/camera-intrinsics-v1.schema.json`が記述します。この契約はCamera Sourceの
+責務であり
+（[kubohiroya/turbowarp-camera-source#14](https://github.com/kubohiroya/turbowarp-camera-source/issues/14)）、
+それが出るまでは本repositoryから公開します。移行時に変わるのは`schema`と
+schemaの`$id`だけです。
+
+検証はschema libraryではなく`src/calibration/profile.ts`の手書き実装で行い、
+公開schemaと検証実装のdriftは`tests/calibration-profile.test.ts`が検出します。
+プロファイルは状態になる前に完全に検証します。不正なschema、非有限値、未知の
+カメラモデルや歪みモデル、モデルと一致しない係数数、ペアリング資格情報、別カメラ
+のプロファイル、別の撮影サイズのプロファイルは、固有のエラーコードで拒否し、
+何も変更しません。
+
+移設元の`twrmc/camera-calibration` v1のプロファイルも同じ入口で読みます。
+`worldFromCameraMatrix`は捨て、記録されていなかった品質は捏造せず欠落のままに
+します。
+
+## 依存とversionのエラー
+
+Camera Sourceのcapabilityは必要になった時点でruntimeから参照し、読み込み時に
+キャッシュしません。
+
+| 状況 | コード |
+|---|---|
+| Camera Sourceが未読込み | `dependency-missing` |
+| Camera Sourceにプロファイル登録APIが無い | `api-version-mismatch` |
+| Camera Sourceの契約versionが異なる | `api-version-mismatch` |
+| solveもimportもしていない | `not-calibrated` |
+| 登録側がプロファイルを拒否した | `publish-failed` |
+
+いずれも成功として扱いません。
+
+## feature flag
+
+`config/feature-flags.ts`はmodule評価時に`cameraCalibrationV1`を凍結します。
+既定はOFFです。OFFのときは状態reporterだけを提供して`idle`を返し、校正command
+はすべて明示的に拒否し、leaseを要求せず、OpenCVのruntimeも初期化しません。
+これがロールバック経路です。従来の挙動はflag 1つ分の距離にあり、利用側は
+この機能拡張を読み込まずに旧経路へ戻せます。
 
 ## drift検出
 

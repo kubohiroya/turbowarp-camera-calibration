@@ -1,0 +1,675 @@
+import {
+  CALIBRATION_LEASE_OWNER,
+  CameraSourceError,
+  requireCameraSource,
+  requireProfileRegistry,
+  type CameraFrameSourcePort,
+  type CameraLeasePort
+} from './camera-source.js';
+import {
+  assertCameraIntrinsics,
+  CalibrationProfileError,
+  parseCalibrationProfile,
+  type CameraIntrinsicsV1
+} from './profile.js';
+import type {
+  CalibrationBackendFactory,
+  CalibrationBackendPort,
+  CalibrationBoard,
+  CalibrationSample
+} from './types.js';
+
+const MINIMUM_SAMPLES = 8;
+const MAXIMUM_SAMPLES = 40;
+const MINIMUM_SAMPLE_QUALITY = 0.2;
+const MINIMUM_NORMALIZED_NOVELTY = 0.015;
+
+export type CalibrationState =
+  | 'idle'
+  | 'acquiring-camera'
+  | 'sampling'
+  | 'ready'
+  | 'solving'
+  | 'solved'
+  | 'cancelling'
+  | 'error';
+
+export type CalibrationErrorCode =
+  | ''
+  | 'dependency-missing'
+  | 'api-version-mismatch'
+  | 'invalid-board'
+  | 'camera-unavailable'
+  | 'camera-ended'
+  | 'resolution-mismatch'
+  | 'capture-condition-mismatch'
+  | 'board-not-found'
+  | 'sample-low-quality'
+  | 'sample-too-similar'
+  | 'sample-limit'
+  | 'sample-insufficient'
+  | 'sample-failed'
+  | 'solve-failed'
+  | 'reprojection-too-high'
+  | 'invalid-calibration'
+  | 'credential-forbidden'
+  | 'calibration-not-applicable'
+  | 'not-calibrated'
+  | 'publish-failed';
+
+export interface CalibrationStartOptions {
+  cameraId: string;
+  calibrationId: string;
+  board: CalibrationBoard;
+  maximumReprojectionErrorPx: number;
+}
+
+export interface CameraCalibrationControllerOptions {
+  runtime: TurboWarpRuntime;
+  backend: CalibrationBackendFactory;
+  nowMilliseconds?: () => number;
+}
+
+interface CalibrationSession {
+  readonly calibrationId: string;
+  readonly board: CalibrationBoard;
+  readonly maximumReprojectionErrorPx: number;
+  readonly imageWidth: number;
+  readonly imageHeight: number;
+  readonly deviceId: string;
+  readonly mirrored: boolean;
+}
+
+/**
+ * One camera's calibration. Every shared camera gets its own instance so that
+ * calibrating one camera never disturbs another camera's session or lease.
+ */
+class CameraCalibration {
+  private session: CalibrationSession | undefined;
+  private lease: CameraLeasePort | undefined;
+  private samples: CalibrationSample[] = [];
+  private sampling: Promise<void> | undefined;
+  private solving: Promise<void> | undefined;
+  private profile: CameraIntrinsicsV1 | undefined;
+  private sessionSampleCount = 0;
+  private sampleQuality = 0;
+  private reprojectionError = 0;
+  private calibrationState: CalibrationState = 'idle';
+  private calibrationErrorCode: CalibrationErrorCode = '';
+  private calibrationErrorMessage = '';
+  private operation = 0;
+
+  public constructor(
+    public readonly cameraId: string,
+    private readonly runtime: TurboWarpRuntime,
+    private readonly resolveBackend: () => Promise<CalibrationBackendPort>,
+    private readonly nowMilliseconds: () => number
+  ) {}
+
+  public async start(options: CalibrationStartOptions): Promise<void> {
+    await this.cancel();
+    let normalized: CalibrationStartOptions;
+    try {
+      normalized = normalizeStartOptions(options);
+    } catch (error) {
+      this.fail('invalid-board', error);
+    }
+    const operation = ++this.operation;
+    this.calibrationState = 'acquiring-camera';
+    this.clearError();
+    let lease: CameraLeasePort;
+    try {
+      lease = await requireCameraSource(this.runtime).acquireCamera({
+        owner: CALIBRATION_LEASE_OWNER,
+        cameraId: normalized.cameraId
+      });
+    } catch (error) {
+      this.fail(
+        error instanceof CameraSourceError ? error.code : 'camera-unavailable',
+        error
+      );
+    }
+    if (operation !== this.operation) {
+      // A cancel arrived while the camera was starting. The lease belongs to
+      // nobody now, so release it instead of retaining an orphan.
+      await lease.release();
+      return;
+    }
+    let frame: CameraFrameSourcePort;
+    try {
+      frame = requireVideoFrame(lease);
+    } catch (error) {
+      await lease.release();
+      this.fail('camera-ended', error);
+    }
+    this.session = {
+      calibrationId: normalized.calibrationId,
+      board: normalized.board,
+      maximumReprojectionErrorPx: normalized.maximumReprojectionErrorPx,
+      imageWidth: frame.width,
+      imageHeight: frame.height,
+      deviceId: frame.deviceId,
+      mirrored: frame.mirrored
+    };
+    this.lease = lease;
+    this.samples = [];
+    this.sessionSampleCount = 0;
+    this.sampleQuality = 0;
+    this.reprojectionError = 0;
+    this.calibrationState = 'ready';
+  }
+
+  public addSample(): Promise<void> {
+    if (this.sampling) return this.sampling;
+    if (!this.session || !this.lease || this.calibrationState !== 'ready') {
+      throw new Error(`Camera ${this.cameraId} calibration is not ready to sample.`);
+    }
+    const sampling = this.captureSample(this.operation);
+    this.sampling = sampling;
+    const clear = () => {
+      if (this.sampling === sampling) this.sampling = undefined;
+    };
+    void sampling.then(clear, clear);
+    return sampling;
+  }
+
+  public solve(): Promise<void> {
+    if (this.solving) return this.solving;
+    if (!this.session || !this.lease || this.calibrationState !== 'ready') {
+      throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
+    }
+    if (this.samples.length < MINIMUM_SAMPLES) {
+      this.reject('sample-insufficient', `At least ${MINIMUM_SAMPLES} accepted samples are required.`);
+    }
+    const solving = this.solveSession(this.operation);
+    this.solving = solving;
+    const clear = () => {
+      if (this.solving === solving) this.solving = undefined;
+    };
+    void solving.then(clear, clear);
+    return solving;
+  }
+
+  public async cancel(): Promise<void> {
+    this.operation += 1;
+    if (this.lease || this.sampling || this.solving) this.calibrationState = 'cancelling';
+    const pending = [this.sampling, this.solving].filter(isPromise);
+    const lease = this.lease;
+    this.lease = undefined;
+    this.session = undefined;
+    await Promise.allSettled(pending);
+    await lease?.release();
+    this.samples = [];
+    this.sessionSampleCount = 0;
+    this.sampleQuality = 0;
+    this.reprojectionError = 0;
+    this.calibrationState = 'idle';
+    this.clearError();
+  }
+
+  public async cleanup(): Promise<void> {
+    await this.cancel();
+    this.profile = undefined;
+  }
+
+  public async importProfile(json: string): Promise<void> {
+    let profile: CameraIntrinsicsV1;
+    try {
+      profile = parseCalibrationProfile(json);
+    } catch (error) {
+      this.failValidation(error);
+    }
+    if (profile.cameraId !== this.cameraId) {
+      this.failValidation(
+        new CalibrationApplicabilityError(
+          `The profile calibrates camera ${profile.cameraId} and cannot be applied to camera ${this.cameraId}.`
+        )
+      );
+    }
+    const session = this.session;
+    if (
+      session &&
+      (session.imageWidth !== profile.imageWidth || session.imageHeight !== profile.imageHeight)
+    ) {
+      this.failValidation(
+        new CalibrationApplicabilityError(
+          `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${session.imageWidth}x${session.imageHeight}.`
+        )
+      );
+    }
+    await this.cancel();
+    this.profile = profile;
+    this.reprojectionError = profile.quality?.reprojectionErrorPx ?? 0;
+    this.sessionSampleCount = profile.quality?.sampleCount ?? 0;
+    this.calibrationState = 'solved';
+  }
+
+  public validateProfile(json: string): boolean {
+    try {
+      parseCalibrationProfile(json);
+      this.clearError();
+      return true;
+    } catch (error) {
+      this.recordError(errorCodeFor(error), error);
+      return false;
+    }
+  }
+
+  /** Hands the solved profile to Camera Source, which owns the contract. */
+  public async publishProfile(): Promise<void> {
+    const profile = this.profile;
+    if (!profile) {
+      this.reject('not-calibrated', `Camera ${this.cameraId} has no calibration profile to publish.`);
+    }
+    let registry;
+    try {
+      registry = requireProfileRegistry(this.runtime);
+    } catch (error) {
+      this.fail(errorCodeFor(error), error);
+    }
+    try {
+      await registry.registerCalibrationProfile(profile);
+    } catch (error) {
+      this.fail('publish-failed', error);
+    }
+    this.clearError();
+  }
+
+  public state(): CalibrationState {
+    return this.calibrationState;
+  }
+
+  public ready(): boolean {
+    return this.calibrationState === 'ready';
+  }
+
+  public sampleCount(): number {
+    return this.sessionSampleCount;
+  }
+
+  public latestSampleQuality(): number {
+    return this.sampleQuality;
+  }
+
+  public latestReprojectionError(): number {
+    return this.reprojectionError;
+  }
+
+  public errorCode(): CalibrationErrorCode {
+    return this.calibrationErrorCode;
+  }
+
+  public errorMessage(): string {
+    return this.calibrationErrorMessage;
+  }
+
+  public profileJson(): string {
+    return this.profile ? JSON.stringify(this.profile) : '';
+  }
+
+  private async captureSample(operation: number): Promise<void> {
+    const session = this.session;
+    const lease = this.lease;
+    if (!session || !lease) return;
+    if (this.samples.length >= MAXIMUM_SAMPLES) {
+      this.reject('sample-limit', `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
+    }
+    this.calibrationState = 'sampling';
+    let frame: CameraFrameSourcePort;
+    try {
+      frame = requireVideoFrame(lease);
+    } catch (error) {
+      // The device went away mid-session. Release before reporting so that a
+      // disconnected camera cannot strand a lease other consumers share.
+      await this.releaseSession();
+      this.fail('camera-ended', error);
+    }
+    if (frame.width !== session.imageWidth || frame.height !== session.imageHeight) {
+      this.reject(
+        'resolution-mismatch',
+        `Expected ${session.imageWidth}x${session.imageHeight}, received ${frame.width}x${frame.height}.`
+      );
+    }
+    if (frame.deviceId !== session.deviceId || frame.mirrored !== session.mirrored) {
+      this.reject(
+        'capture-condition-mismatch',
+        `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`
+      );
+    }
+    let sample: CalibrationSample | undefined;
+    try {
+      const backend = await this.resolveBackend();
+      sample = await backend.captureSample(
+        {element: frame.element, width: frame.width, height: frame.height},
+        session.board
+      );
+    } catch (error) {
+      this.fail('sample-failed', error);
+    }
+    if (operation !== this.operation) return;
+    if (!sample) this.reject('board-not-found', 'The complete chessboard was not found.');
+    const expectedCorners = session.board.columns * session.board.rows;
+    if (
+      sample.corners.length !== expectedCorners ||
+      !Number.isFinite(sample.quality) ||
+      sample.quality < MINIMUM_SAMPLE_QUALITY
+    ) {
+      this.reject('sample-low-quality', `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
+    }
+    const accepted = sample;
+    if (
+      this.samples.some(
+        (previous) =>
+          normalizedCornerDistance(previous, accepted, session.imageWidth, session.imageHeight) <
+          MINIMUM_NORMALIZED_NOVELTY
+      )
+    ) {
+      this.reject('sample-too-similar', 'Move or tilt the board before capturing another sample.');
+    }
+    this.samples.push(accepted);
+    this.sessionSampleCount = this.samples.length;
+    this.sampleQuality = accepted.quality;
+    this.calibrationState = 'ready';
+    this.clearError();
+  }
+
+  private async solveSession(operation: number): Promise<void> {
+    const session = this.session;
+    const lease = this.lease;
+    if (!session || !lease) return;
+    this.calibrationState = 'solving';
+    let solution;
+    try {
+      const backend = await this.resolveBackend();
+      solution = await backend.solve(
+        [...this.samples],
+        session.board,
+        session.imageWidth,
+        session.imageHeight
+      );
+    } catch (error) {
+      this.fail('solve-failed', error);
+    }
+    if (operation !== this.operation) return;
+    this.reprojectionError = solution.reprojectionErrorPx;
+    if (
+      !Number.isFinite(this.reprojectionError) ||
+      this.reprojectionError > session.maximumReprojectionErrorPx
+    ) {
+      this.calibrationState = 'ready';
+      this.reject(
+        'reprojection-too-high',
+        `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`
+      );
+    }
+    const sampleCount = this.samples.length;
+    let profile: CameraIntrinsicsV1;
+    try {
+      profile = assertCameraIntrinsics({
+        schema: 'camerasource/camera-intrinsics',
+        version: 1,
+        calibrationId: session.calibrationId,
+        cameraId: this.cameraId,
+        cameraModel: 'pinhole',
+        imageWidth: session.imageWidth,
+        imageHeight: session.imageHeight,
+        imageState: 'raw',
+        intrinsicMatrix: solution.intrinsicMatrix,
+        distortionModel: solution.distortionModel,
+        distortionCoefficients: solution.distortionCoefficients,
+        quality: {sampleCount, reprojectionErrorPx: solution.reprojectionErrorPx},
+        calibratedAt: new Date(this.nowMilliseconds()).toISOString()
+      });
+    } catch (error) {
+      this.fail('invalid-calibration', error);
+    }
+    this.profile = profile;
+    this.sessionSampleCount = sampleCount;
+    this.samples = [];
+    this.lease = undefined;
+    this.session = undefined;
+    // The solve is complete whether or not Camera Source can complete the
+    // release, so record it before handing the lease back.
+    this.calibrationState = 'solved';
+    this.clearError();
+    await lease.release();
+  }
+
+  /** Drops the session and releases its lease without touching diagnostics. */
+  private async releaseSession(): Promise<void> {
+    const lease = this.lease;
+    this.lease = undefined;
+    this.session = undefined;
+    this.samples = [];
+    await lease?.release();
+  }
+
+  private reject(code: CalibrationErrorCode, message: string): never {
+    this.calibrationErrorCode = code;
+    this.calibrationErrorMessage = `${code}: ${message}`;
+    if (this.calibrationState !== 'ready') {
+      this.calibrationState = this.lease ? 'ready' : this.calibrationState;
+    }
+    throw new Error(this.calibrationErrorMessage);
+  }
+
+  private fail(code: CalibrationErrorCode, cause: unknown): never {
+    this.calibrationState = 'error';
+    this.recordError(code, cause);
+    throw new Error(this.calibrationErrorMessage, {cause});
+  }
+
+  /** Reports a rejected profile without disturbing the session or the state. */
+  private failValidation(error: unknown): never {
+    this.recordError(errorCodeFor(error), error);
+    throw new Error(this.calibrationErrorMessage, {cause: error});
+  }
+
+  private recordError(code: CalibrationErrorCode, cause: unknown): void {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    this.calibrationErrorCode = code;
+    this.calibrationErrorMessage = `${code}: ${detail}`;
+  }
+
+  private clearError(): void {
+    this.calibrationErrorCode = '';
+    this.calibrationErrorMessage = '';
+  }
+}
+
+/**
+ * Routes calibration blocks to one `CameraCalibration` per shared camera and
+ * owns the solver, which is created on first use and never at load time.
+ */
+export class CameraCalibrationController {
+  private readonly cameras = new Map<string, CameraCalibration>();
+  private readonly runtime: TurboWarpRuntime;
+  private readonly backendFactory: CalibrationBackendFactory;
+  private readonly nowMilliseconds: () => number;
+  private backendPromise: Promise<CalibrationBackendPort> | undefined;
+
+  public constructor(options: CameraCalibrationControllerOptions) {
+    this.runtime = options.runtime;
+    this.backendFactory = options.backend;
+    this.nowMilliseconds = options.nowMilliseconds ?? Date.now;
+  }
+
+  public start(options: CalibrationStartOptions): Promise<void> {
+    return this.camera(options.cameraId).start(options);
+  }
+
+  public addSample(cameraId: string): Promise<void> {
+    return this.camera(cameraId).addSample();
+  }
+
+  public solve(cameraId: string): Promise<void> {
+    return this.camera(cameraId).solve();
+  }
+
+  public cancel(cameraId: string): Promise<void> {
+    return this.existing(cameraId)?.cancel() ?? Promise.resolve();
+  }
+
+  public cleanup(cameraId: string): Promise<void> {
+    return this.existing(cameraId)?.cleanup() ?? Promise.resolve();
+  }
+
+  public importProfile(cameraId: string, json: string): Promise<void> {
+    return this.camera(cameraId).importProfile(json);
+  }
+
+  public publishProfile(cameraId: string): Promise<void> {
+    return this.camera(cameraId).publishProfile();
+  }
+
+  public validateProfile(cameraId: string, json: string): boolean {
+    return this.camera(cameraId).validateProfile(json);
+  }
+
+  /** Releases every lease. Used for project stop, reload, and disposal. */
+  public async cancelAll(): Promise<void> {
+    await Promise.allSettled([...this.cameras.values()].map((camera) => camera.cancel()));
+  }
+
+  /** Releases every lease and forgets every in-memory profile. */
+  public async cleanupAll(): Promise<void> {
+    await Promise.allSettled([...this.cameras.values()].map((camera) => camera.cleanup()));
+    this.cameras.clear();
+  }
+
+  public backend(): string {
+    return this.backendFactory.name;
+  }
+
+  public state(cameraId: string): CalibrationState {
+    return this.existing(cameraId)?.state() ?? 'idle';
+  }
+
+  public ready(cameraId: string): boolean {
+    return this.existing(cameraId)?.ready() ?? false;
+  }
+
+  public sampleCount(cameraId: string): number {
+    return this.existing(cameraId)?.sampleCount() ?? 0;
+  }
+
+  public latestSampleQuality(cameraId: string): number {
+    return this.existing(cameraId)?.latestSampleQuality() ?? 0;
+  }
+
+  public latestReprojectionError(cameraId: string): number {
+    return this.existing(cameraId)?.latestReprojectionError() ?? 0;
+  }
+
+  public errorCode(cameraId: string): CalibrationErrorCode {
+    return this.existing(cameraId)?.errorCode() ?? '';
+  }
+
+  public errorMessage(cameraId: string): string {
+    return this.existing(cameraId)?.errorMessage() ?? '';
+  }
+
+  public profileJson(cameraId: string): string {
+    return this.existing(cameraId)?.profileJson() ?? '';
+  }
+
+  private existing(cameraId: string): CameraCalibration | undefined {
+    return this.cameras.get(cameraId);
+  }
+
+  private camera(cameraId: string): CameraCalibration {
+    const existing = this.cameras.get(cameraId);
+    if (existing) return existing;
+    const created = new CameraCalibration(
+      cameraId,
+      this.runtime,
+      () => this.resolveBackend(),
+      this.nowMilliseconds
+    );
+    this.cameras.set(cameraId, created);
+    return created;
+  }
+
+  /** Creates the solver once, on the first sample or solve of any camera. */
+  private resolveBackend(): Promise<CalibrationBackendPort> {
+    this.backendPromise ??= this.backendFactory.create();
+    return this.backendPromise;
+  }
+}
+
+class CalibrationApplicabilityError extends Error {
+  public readonly code = 'calibration-not-applicable' as const;
+}
+
+function errorCodeFor(error: unknown): CalibrationErrorCode {
+  if (error instanceof CalibrationApplicabilityError) return error.code;
+  if (error instanceof CalibrationProfileError) return error.code;
+  if (error instanceof CameraSourceError) return error.code;
+  return 'invalid-calibration';
+}
+
+function requireVideoFrame(lease: CameraLeasePort): CameraFrameSourcePort {
+  const frame = lease.getFrameSource();
+  if (frame.kind !== 'video' || frame.width < 1 || frame.height < 1) {
+    throw new Error('Camera Source has no current video frame.');
+  }
+  return frame;
+}
+
+function normalizeStartOptions(options: CalibrationStartOptions): CalibrationStartOptions {
+  const columns = integerInRange(options.board.columns, 3, 20, 'columns');
+  const rows = integerInRange(options.board.rows, 3, 20, 'rows');
+  if (
+    !Number.isFinite(options.board.squareSizeMeters) ||
+    options.board.squareSizeMeters <= 0 ||
+    options.board.squareSizeMeters > 1
+  ) {
+    throw new Error('square size must be within (0, 1] meter.');
+  }
+  if (
+    !Number.isFinite(options.maximumReprojectionErrorPx) ||
+    options.maximumReprojectionErrorPx <= 0 ||
+    options.maximumReprojectionErrorPx > 100
+  ) {
+    throw new Error('maximum reprojection error must be within (0, 100] px.');
+  }
+  return {
+    cameraId: identifier(options.cameraId, 'camera ID'),
+    calibrationId: identifier(options.calibrationId, 'calibration ID'),
+    board: {columns, rows, squareSizeMeters: options.board.squareSizeMeters},
+    maximumReprojectionErrorPx: options.maximumReprojectionErrorPx
+  };
+}
+
+function normalizedCornerDistance(
+  left: CalibrationSample,
+  right: CalibrationSample,
+  width: number,
+  height: number
+): number {
+  let squared = 0;
+  for (let index = 0; index < left.corners.length; index += 1) {
+    const a = left.corners[index];
+    const b = right.corners[index];
+    if (!a || !b) return Number.POSITIVE_INFINITY;
+    squared += (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+  }
+  return Math.sqrt(squared / left.corners.length) / Math.hypot(width, height);
+}
+
+function identifier(value: string, label: string): string {
+  const text = value.trim();
+  if (!/^[A-Za-z0-9._-]{1,64}$/u.test(text)) throw new Error(`invalid ${label}.`);
+  return text;
+}
+
+function integerInRange(value: number, minimum: number, maximum: number, label: string): number {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function isPromise(value: Promise<void> | undefined): value is Promise<void> {
+  return value !== undefined;
+}
