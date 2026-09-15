@@ -2,10 +2,176 @@
   "extensionName": "TurboWarp-Camera-Calibration",
   "blocks": [
     {
+      "opcode": "startCameraCalibration",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m max error [MAX_ERROR_PX] px",
+      "description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is measured in inner corners, not printed squares.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"},
+        "CALIBRATION_ID": {"type": "STRING", "defaultValue": "calibration-1"},
+        "COLUMNS": {"type": "NUMBER", "defaultValue": 9},
+        "ROWS": {"type": "NUMBER", "defaultValue": 6},
+        "SQUARE_METERS": {"type": "NUMBER", "defaultValue": 0.025},
+        "MAX_ERROR_PX": {"type": "NUMBER", "defaultValue": 1.5}
+      }
+    },
+    {
+      "opcode": "addCameraCalibrationSample",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "add calibration sample for camera [CAMERA_ID]",
+      "description": "Detects the complete board in the current shared frame and retains it when its quality and its novelty against the retained samples both pass.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "solveCameraCalibration",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "solve calibration for camera [CAMERA_ID]",
+      "description": "Solves the intrinsic matrix and distortion coefficients from at least eight accepted samples, then releases the camera lease. No external pose is produced.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cancelCameraCalibration",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "cancel calibration for camera [CAMERA_ID]",
+      "description": "Releases the camera lease and the retained samples while preserving the last validated profile.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cleanupCameraCalibration",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "cleanup calibration for camera [CAMERA_ID]",
+      "description": "Releases the session and also clears the in-memory calibration profile for that camera.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "publishCameraCalibration",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "publish calibration profile for camera [CAMERA_ID]",
+      "description": "Registers the solved profile with Camera Source, which owns the profile contract. Reports an explicit error when Camera Source is absent, speaks another contract version, or has no profile to publish.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "importCameraCalibration",
+      "feature": "cameraCalibrationV1",
+      "blockType": "COMMAND",
+      "text": "import calibration profile [JSON] for camera [CAMERA_ID]",
+      "description": "Imports a calibration profile after schema, credential, and applicability checks. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.",
+      "arguments": {
+        "JSON": {"type": "STRING", "defaultValue": "{}"},
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationJsonValid",
+      "feature": "cameraCalibrationV1",
+      "blockType": "BOOLEAN",
+      "text": "calibration profile [JSON] valid for camera [CAMERA_ID]?",
+      "description": "Validates a profile and records why it failed, without replacing the stored profile.",
+      "arguments": {
+        "JSON": {"type": "STRING", "defaultValue": "{}"},
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationReady",
+      "feature": "cameraCalibrationV1",
+      "blockType": "BOOLEAN",
+      "text": "camera [CAMERA_ID] calibration ready?",
+      "description": "Reports whether a fixed-resolution session for that camera can accept a sample or solve.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
       "opcode": "cameraCalibrationState",
+      "feature": "always",
       "blockType": "REPORTER",
       "text": "camera calibration state [CAMERA_ID]",
-      "description": "Returns the calibration session state for one shared Camera Source camera. The calibration procedure is not implemented yet, so this reporter always returns idle.",
+      "description": "Returns the calibration session state for one shared Camera Source camera: idle, acquiring-camera, sampling, ready, solving, solved, cancelling, or error. A camera that has never been calibrated reports idle.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationBackend",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera calibration backend",
+      "description": "Returns the pinned solver identifier. Reading it does not load the solver.",
+      "arguments": {}
+    },
+    {
+      "opcode": "cameraCalibrationSampleCount",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] calibration sample count",
+      "description": "Returns the accepted sample count for the current or last solved session.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationSampleQuality",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] calibration sample quality",
+      "description": "Returns the latest accepted sample's combined board coverage and sharpness score, from zero to one.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationReprojectionError",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] calibration reprojection error px",
+      "description": "Returns the RMS reprojection error in pixels for the latest solve or imported profile.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationErrorCode",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] calibration error code",
+      "description": "Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationError",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] calibration error",
+      "description": "Returns the detailed calibration diagnostic for that camera.",
+      "arguments": {
+        "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
+      }
+    },
+    {
+      "opcode": "cameraCalibrationJson",
+      "feature": "cameraCalibrationV1",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] calibration profile JSON",
+      "description": "Exports the stored intrinsic profile for that camera, or an empty string when none exists.",
       "arguments": {
         "CAMERA_ID": {"type": "STRING", "defaultValue": "default"}
       }

@@ -3,7 +3,10 @@
   "productName": "TurboWarp-Camera-Calibration",
   "packageType": "extension",
   "licensePolicy": "mpl-2.0",
-  "readmeLanguages": ["en", "ja"],
+  "readmeLanguages": [
+    "en",
+    "ja"
+  ],
   "canonicalReadme": "README.md",
   "localizedReadmes": {
     "ja": "README.ja.md"
@@ -12,18 +15,23 @@
     "minimum": "22.18.0"
   },
   "packageManager": "pnpm",
-  "requiredFiles": ["README.md", "README.ja.md", "LICENSE"],
+  "requiredFiles": [
+    "README.md",
+    "README.ja.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "exceptions": {
     "upstreamFork": false,
     "mixedContentLicenses": false,
     "legacyPackageName": false,
-    "thirdPartyBundle": false
+    "thirdPartyBundle": true
   },
   "migrationChecklist": [
     "Replace placeholder package metadata with repository-specific values.",
     "Keep LICENSE as the full Mozilla Public License 2.0 text unless policy records an exception.",
     "Keep README.md as the canonical English entrypoint and README.ja.md for Japanese content.",
-    "Record every bundled third-party component in THIRD_PARTY_NOTICES.md before releasing an OpenCV-backed build.",
+    "Keep THIRD_PARTY_NOTICES.md current: the bundle inlines OpenCV.js at a pinned version.",
     "Run pnpm run check before publishing generated artifacts."
   ]
 }

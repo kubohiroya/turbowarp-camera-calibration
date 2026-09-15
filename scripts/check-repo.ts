@@ -58,11 +58,15 @@ const readme = await readFile(policy.canonicalReadme, 'utf8');
 const readmeJa = await readFile(policy.localizedReadmes.ja, 'utf8');
 const license = await readFile('LICENSE', 'utf8');
 const config = await readFile('src/config.ts', 'utf8');
+const notices = policy.exceptions.thirdPartyBundle
+  ? await readFile('THIRD_PARTY_NOTICES.md', 'utf8')
+  : '';
 
 checkPolicy();
 checkPackageMetadata();
 checkReadmes();
 checkLicense();
+checkThirdPartyBundle();
 checkGeneratedArtifacts();
 await checkPackContents();
 
@@ -159,6 +163,35 @@ function checkLicense() {
   }
   if (!config.includes("license: 'MPL-2.0'")) {
     errors.push('src/config.ts must expose MPL-2.0 bundle metadata');
+  }
+}
+
+function checkThirdPartyBundle() {
+  const dependencies = Object.entries(packageMetadata.dependencies ?? {});
+  if (!policy.exceptions.thirdPartyBundle) {
+    if (dependencies.length > 0) {
+      errors.push('repo-policy.json must record a thirdPartyBundle exception before adding a runtime dependency');
+    }
+    return;
+  }
+  if (dependencies.length === 0) {
+    errors.push('repo-policy.json records a thirdPartyBundle exception but no runtime dependency is bundled');
+  }
+  for (const [name, range] of dependencies) {
+    // The bundle is reviewed and committed, so every inlined component must be
+    // reproducible from an exact version.
+    if (!/^\d+\.\d+\.\d+/u.test(range)) {
+      errors.push(`package.json dependency ${name} must pin an exact version`);
+    }
+    if (!notices.includes(name)) {
+      errors.push(`THIRD_PARTY_NOTICES.md must record ${name}`);
+    }
+    if (!notices.includes(range)) {
+      errors.push(`THIRD_PARTY_NOTICES.md must record the pinned ${name} version ${range}`);
+    }
+  }
+  if (!readme.includes('THIRD_PARTY_NOTICES.md')) {
+    errors.push('README.md must link THIRD_PARTY_NOTICES.md');
   }
 }
 
