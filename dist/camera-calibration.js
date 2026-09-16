@@ -798,6 +798,28 @@
   }
   //#endregion
   //#region src/calibration/controller.ts
+  /**
+  * How long a just-acquired camera is given to produce its first frame.
+  *
+  * Camera Source reports a camera as started once `play()` resolves, and for a
+  * MediaStream that can happen before the metadata carrying the frame size has
+  * arrived -- so the very first look at the video can legitimately find a
+  * zero-sized element. Treating that as a dead camera ends a session the
+  * operator just started, on a camera that was about to work.
+  *
+  * Long enough for a slow USB camera to enumerate, short enough that a camera
+  * which really is producing nothing does not leave the operator waiting
+  * without an answer.
+  */
+  var FIRST_FRAME_TIMEOUT_MS = 4e3;
+  var FIRST_FRAME_POLL_MS = 30;
+  /**
+  * The same limit counted in looks rather than milliseconds.
+  *
+  * Both, because the clock is injected: a host that supplies a coarse or
+  * stopped one would otherwise turn this wait into a loop with no way out.
+  */
+  var FIRST_FRAME_ATTEMPTS = Math.ceil(FIRST_FRAME_TIMEOUT_MS / FIRST_FRAME_POLL_MS);
   /** The document a measured pose is reported as. */
   var BOARD_POSE_SCHEMA = "twcc/board-pose";
   var MINIMUM_SAMPLES = 8;
@@ -908,10 +930,14 @@
   		}
   		let frame;
   		try {
-  			frame = requireVideoFrame(lease);
+  			frame = await this.awaitFirstFrame(lease, operation);
   		} catch (error) {
   			await lease.release();
   			this.fail("camera-ended", error);
+  		}
+  		if (operation !== this.operation) {
+  			await lease.release();
+  			return;
   		}
   		this.session = {
   			calibrationId: normalized.calibrationId,
@@ -969,6 +995,30 @@
   	}
   	guidance() {
   		return this.guidanceCode;
+  	}
+  	/**
+  	* Waits for the camera to hand over a frame with a size on it.
+  	*
+  	* The session's resolution is fixed from this frame and every later sample
+  	* is checked against it, so reading it one tick too early would fix the
+  	* session to a size the camera never had.
+  	*/
+  	async awaitFirstFrame(lease, operation) {
+  		const deadline = this.nowMilliseconds() + FIRST_FRAME_TIMEOUT_MS;
+  		for (let attempt = 0;; attempt += 1) {
+  			const frame = lease.getFrameSource();
+  			if (frame.kind === "video" && frame.width >= 1 && frame.height >= 1) return frame;
+  			if (operation !== this.operation) throw new Error("The calibration was cancelled while the camera started.");
+  			if (this.nowMilliseconds() >= deadline || attempt >= FIRST_FRAME_ATTEMPTS) throw new Error(`The camera produced no frame within ${FIRST_FRAME_TIMEOUT_MS} ms of starting.`);
+  			await this.delay(FIRST_FRAME_POLL_MS);
+  		}
+  	}
+  	delay(milliseconds) {
+  		return new Promise((resolve) => {
+  			this.schedule(() => {
+  				resolve();
+  			}, milliseconds);
+  		});
   	}
   	stopAutomatic() {
   		this.automatic = false;
