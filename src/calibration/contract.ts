@@ -33,6 +33,7 @@ export type CalibrationErrorCode =
   | 'sample-too-similar'
   | 'sample-limit'
   | 'sample-insufficient'
+  | 'sample-poses-degenerate'
   | 'sample-failed'
   | 'solve-failed'
   | 'reprojection-too-high'

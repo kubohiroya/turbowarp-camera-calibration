@@ -24,6 +24,7 @@ import type {
   CalibrationStartOptions,
   CalibrationState
 } from './contract.js';
+import {MINIMUM_POSE_SPREAD, poseSpread} from './pose.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -35,6 +36,21 @@ const MINIMUM_SAMPLES = 8;
 const MAXIMUM_SAMPLES = 40;
 const MINIMUM_SAMPLE_QUALITY = 0.2;
 const MINIMUM_NORMALIZED_NOVELTY = 0.015;
+
+/**
+ * The share of samples held back from the fit, to be reprojected afterwards.
+ *
+ * A solve's own reprojection error says how well the answer reproduces the
+ * samples that produced it. With few samples for the number of parameters an
+ * overfitted answer scores well on exactly that, so some views are kept out of
+ * the fit and scored separately. The two agreeing is the evidence; the two
+ * disagreeing says the set was too small or too alike.
+ *
+ * Never at the cost of the minimum: if holding views back would leave fewer
+ * than MINIMUM_SAMPLES to fit, fewer are held back, and none at all rather than
+ * a fit that is weaker than the one the operator was promised.
+ */
+const HOLDOUT_FRACTION = 0.2;
 
 /** Codes a profile validation can produce, and therefore can clear. */
 const PROFILE_ERROR_CODES: ReadonlySet<string> = new Set([
@@ -74,6 +90,8 @@ class CameraCalibration {
   private sessionSampleCount = 0;
   private sampleQuality = 0;
   private reprojectionError = 0;
+  private holdoutError = 0;
+  private holdoutCount = 0;
   private calibrationState: CalibrationState = 'idle';
   private calibrationErrorCode: CalibrationErrorCode = '';
   private calibrationErrorMessage = '';
@@ -148,6 +166,8 @@ class CameraCalibration {
     this.sessionSampleCount = 0;
     this.sampleQuality = 0;
     this.reprojectionError = 0;
+    this.holdoutError = 0;
+    this.holdoutCount = 0;
     this.calibrationState = 'ready';
   }
 
@@ -172,6 +192,18 @@ class CameraCalibration {
     }
     if (this.samples.length < MINIMUM_SAMPLES) {
       this.reject('sample-insufficient', `At least ${MINIMUM_SAMPLES} accepted samples are required.`);
+    }
+    // Refused here rather than at capture time. A sample taken at a tilt some
+    // other sample already has is not a wasted sample -- it still constrains
+    // the principal point and the distortion. What cannot be solved from is a
+    // whole set that never varied, and that is only knowable once the set is
+    // complete.
+    const spread = poseSpread(this.samples, this.session.board);
+    if (spread < MINIMUM_POSE_SPREAD) {
+      this.reject(
+        'sample-poses-degenerate',
+        `The board was held at nearly the same angle throughout (spread ${spread.toFixed(3)}, at least ${MINIMUM_POSE_SPREAD} is required). Tilt it between samples; moving it sideways does not separate focal length from distance.`
+      );
     }
     const solving = this.solveSession(this.operation);
     this.solving = solving;
@@ -199,6 +231,8 @@ class CameraCalibration {
     this.sessionSampleCount = 0;
     this.sampleQuality = 0;
     this.reprojectionError = 0;
+    this.holdoutError = 0;
+    this.holdoutCount = 0;
     this.calibrationState = 'idle';
     this.clearError();
   }
@@ -316,6 +350,22 @@ class CameraCalibration {
     return this.reprojectionError;
   }
 
+  /** RMS reprojection over views the fit never saw. Zero when none were held. */
+  public latestHoldoutError(): number {
+    return this.holdoutError;
+  }
+
+  /** How many views were held back. Zero means nothing was validated. */
+  public holdoutSampleCount(): number {
+    return this.holdoutCount;
+  }
+
+  /** How varied the collected tilts are. Zero until a second sample lands. */
+  public poseSpread(): number {
+    const session = this.session;
+    return session ? poseSpread(this.samples, session.board) : 0;
+  }
+
   public errorCode(): CalibrationErrorCode {
     return this.calibrationErrorCode;
   }
@@ -399,20 +449,25 @@ class CameraCalibration {
     const lease = this.lease;
     if (!session || !lease) return;
     this.calibrationState = 'solving';
+    const {fitted, heldOut} = splitForValidation(this.samples);
     let solution;
+    let holdoutError = 0;
     try {
       const backend = await this.resolveBackend();
       solution = await backend.solve(
-        [...this.samples],
+        fitted,
         session.board,
         session.imageWidth,
         session.imageHeight
       );
+      holdoutError = await backend.validate(heldOut, session.board, solution);
     } catch (error) {
       this.fail('solve-failed', error);
     }
     if (operation !== this.operation) return;
     this.reprojectionError = solution.reprojectionErrorPx;
+    this.holdoutError = holdoutError;
+    this.holdoutCount = heldOut.length;
     if (
       !Number.isFinite(this.reprojectionError) ||
       this.reprojectionError > session.maximumReprojectionErrorPx
@@ -590,6 +645,18 @@ export class CameraCalibrationController {
     return this.existing(cameraId)?.latestReprojectionError() ?? 0;
   }
 
+  public poseSpread(cameraId: string): number {
+    return this.existing(cameraId)?.poseSpread() ?? 0;
+  }
+
+  public latestHoldoutError(cameraId: string): number {
+    return this.existing(cameraId)?.latestHoldoutError() ?? 0;
+  }
+
+  public holdoutSampleCount(cameraId: string): number {
+    return this.existing(cameraId)?.holdoutSampleCount() ?? 0;
+  }
+
   public errorCode(cameraId: string): CalibrationErrorCode {
     return this.existing(cameraId)?.errorCode() ?? '';
   }
@@ -700,6 +767,37 @@ function integerInRange(value: number, minimum: number, maximum: number, label: 
     throw new Error(`${label} must be an integer from ${minimum} to ${maximum}.`);
   }
   return value;
+}
+
+/**
+ * Divides the samples into the ones fitted and the ones kept back.
+ *
+ * Spread evenly through the order they were captured rather than taken from
+ * the end. Samples near each other in time are the ones most likely to share a
+ * position, so a hold-out cut from the tail can be the least independent part
+ * of the set -- which would make the check read better than it should.
+ */
+function splitForValidation(samples: readonly CalibrationSample[]): {
+  fitted: CalibrationSample[];
+  heldOut: CalibrationSample[];
+} {
+  const holdOut = Math.min(
+    Math.floor(samples.length * HOLDOUT_FRACTION),
+    samples.length - MINIMUM_SAMPLES
+  );
+  if (holdOut < 1) return {fitted: [...samples], heldOut: []};
+  const step = samples.length / holdOut;
+  const chosen = new Set(
+    Array.from({length: holdOut}, (_, index) =>
+      Math.min(samples.length - 1, Math.floor(index * step + step / 2))
+    )
+  );
+  const fitted: CalibrationSample[] = [];
+  const heldOut: CalibrationSample[] = [];
+  samples.forEach((sample, index) => {
+    (chosen.has(index) ? heldOut : fitted).push(sample);
+  });
+  return {fitted, heldOut};
 }
 
 function isPromise(value: Promise<void> | undefined): value is Promise<void> {

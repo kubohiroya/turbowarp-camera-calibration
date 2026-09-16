@@ -102,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.4.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.5.0
 ```
 
 Load the standalone bundle from:
@@ -114,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.4.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.5.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -326,6 +326,36 @@ Returns the RMS reprojection error in pixels for the latest solve or imported pr
 |---|---|
 | Type | Reporter |
 | Opcode | `cameraCalibrationReprojectionError` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera [CAMERA_ID] calibration pose spread`
+
+Returns how varied the angles of the collected samples are. Zero means every sample was taken from the same direction, which cannot be solved from: focal length and distance stay inseparable. Solving is refused below the required spread.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationPoseSpread` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera [CAMERA_ID] calibration holdout error px`
+
+Returns the RMS reprojection error over the samples the solve was not fitted to. Compare it with the reprojection error: the two agreeing is the evidence that the calibration generalizes, and the two disagreeing says the set was too small or too alike.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationHoldoutErrorPx` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera [CAMERA_ID] calibration holdout sample count`
+
+Returns how many samples were held back from the solve. Zero means nothing was validated, so the holdout error says nothing.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationHoldoutSampleCount` |
 | `CAMERA_ID` | String, default: `default` |
 
 ### `camera [CAMERA_ID] calibration error code`

@@ -217,6 +217,36 @@
   			} }
   		},
   		{
+  			"opcode": "cameraCalibrationPoseSpread",
+  			"blockType": "REPORTER",
+  			"text": "camera [CAMERA_ID] calibration pose spread",
+  			"description": "Returns how varied the angles of the collected samples are. Zero means every sample was taken from the same direction, which cannot be solved from: focal length and distance stay inseparable. Solving is refused below the required spread.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationHoldoutErrorPx",
+  			"blockType": "REPORTER",
+  			"text": "camera [CAMERA_ID] calibration holdout error px",
+  			"description": "Returns the RMS reprojection error over the samples the solve was not fitted to. Compare it with the reprojection error: the two agreeing is the evidence that the calibration generalizes, and the two disagreeing says the set was too small or too alike.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationHoldoutSampleCount",
+  			"blockType": "REPORTER",
+  			"text": "camera [CAMERA_ID] calibration holdout sample count",
+  			"description": "Returns how many samples were held back from the solve. Zero means nothing was validated, so the holdout error says nothing.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
   			"opcode": "cameraCalibrationErrorCode",
   			"blockType": "REPORTER",
   			"text": "camera [CAMERA_ID] calibration error code",
@@ -636,11 +666,78 @@
   	return value;
   }
   //#endregion
+  //#region src/calibration/pose.ts
+  var NO_TILT = Object.freeze({
+  	x: 0,
+  	y: 0
+  });
+  /**
+  * The minimum spread of tilts a solve is allowed to proceed from.
+  *
+  * A board half as wide as its distance, tilted thirty degrees, gives an edge
+  * ratio near 1.35 and so a component near 0.30. This floor is a quarter of
+  * that: enough to refuse a set collected without tilting, or tilted the same
+  * way every time, without refusing a cautious operator who varied it a little.
+  */
+  var MINIMUM_POSE_SPREAD = .08;
+  function tiltOf(sample, board) {
+  	const { columns, rows } = board;
+  	if (sample.corners.length !== columns * rows) return NO_TILT;
+  	const at = (column, row) => sample.corners[row * columns + column];
+  	const topLeft = at(0, 0);
+  	const topRight = at(columns - 1, 0);
+  	const bottomLeft = at(0, rows - 1);
+  	const bottomRight = at(columns - 1, rows - 1);
+  	if (!topLeft || !topRight || !bottomLeft || !bottomRight) return NO_TILT;
+  	return {
+  		x: logRatio(distance(topLeft, topRight), distance(bottomLeft, bottomRight)),
+  		y: logRatio(distance(topLeft, bottomLeft), distance(topRight, bottomRight))
+  	};
+  }
+  /**
+  * How varied the collected tilts are: the RMS distance from their mean.
+  *
+  * One number covers both ways a set goes wrong. Every sample square on puts
+  * every tilt near the origin; every sample tilted the same way puts them all in
+  * one place. Either way they sit together, and this is near zero.
+  */
+  function poseSpread(samples, board) {
+  	if (samples.length < 2) return 0;
+  	const tilts = samples.map((sample) => tiltOf(sample, board));
+  	const mean = {
+  		x: tilts.reduce((total, tilt) => total + tilt.x, 0) / tilts.length,
+  		y: tilts.reduce((total, tilt) => total + tilt.y, 0) / tilts.length
+  	};
+  	const squared = tilts.reduce((total, tilt) => total + (tilt.x - mean.x) ** 2 + (tilt.y - mean.y) ** 2, 0) / tilts.length;
+  	return Math.sqrt(squared);
+  }
+  function logRatio(first, second) {
+  	if (!(first > 0) || !(second > 0)) return 0;
+  	return Math.log(first / second);
+  }
+  function distance(from, to) {
+  	return Math.hypot(from.x - to.x, from.y - to.y);
+  }
+  //#endregion
   //#region src/calibration/controller.ts
   var MINIMUM_SAMPLES = 8;
   var MAXIMUM_SAMPLES = 40;
   var MINIMUM_SAMPLE_QUALITY = .2;
   var MINIMUM_NORMALIZED_NOVELTY = .015;
+  /**
+  * The share of samples held back from the fit, to be reprojected afterwards.
+  *
+  * A solve's own reprojection error says how well the answer reproduces the
+  * samples that produced it. With few samples for the number of parameters an
+  * overfitted answer scores well on exactly that, so some views are kept out of
+  * the fit and scored separately. The two agreeing is the evidence; the two
+  * disagreeing says the set was too small or too alike.
+  *
+  * Never at the cost of the minimum: if holding views back would leave fewer
+  * than MINIMUM_SAMPLES to fit, fewer are held back, and none at all rather than
+  * a fit that is weaker than the one the operator was promised.
+  */
+  var HOLDOUT_FRACTION = .2;
   /** Codes a profile validation can produce, and therefore can clear. */
   var PROFILE_ERROR_CODES = /* @__PURE__ */ new Set([
   	"invalid-calibration",
@@ -661,6 +758,8 @@
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
+  		this.holdoutError = 0;
+  		this.holdoutCount = 0;
   		this.calibrationState = "idle";
   		this.calibrationErrorCode = "";
   		this.calibrationErrorMessage = "";
@@ -720,6 +819,8 @@
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
+  		this.holdoutError = 0;
+  		this.holdoutCount = 0;
   		this.calibrationState = "ready";
   	}
   	addSample() {
@@ -737,6 +838,8 @@
   		if (this.solving) return this.solving;
   		if (!this.session || !this.lease || this.calibrationState !== "ready") throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
   		if (this.samples.length < MINIMUM_SAMPLES) this.reject("sample-insufficient", `At least ${MINIMUM_SAMPLES} accepted samples are required.`);
+  		const spread = poseSpread(this.samples, this.session.board);
+  		if (spread < .08) this.reject("sample-poses-degenerate", `The board was held at nearly the same angle throughout (spread ${spread.toFixed(3)}, at least ${MINIMUM_POSE_SPREAD} is required). Tilt it between samples; moving it sideways does not separate focal length from distance.`);
   		const solving = this.solveSession(this.operation);
   		this.solving = solving;
   		const clear = () => {
@@ -762,6 +865,8 @@
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
+  		this.holdoutError = 0;
+  		this.holdoutCount = 0;
   		this.calibrationState = "idle";
   		this.clearError();
   	}
@@ -835,6 +940,19 @@
   	latestReprojectionError() {
   		return this.reprojectionError;
   	}
+  	/** RMS reprojection over views the fit never saw. Zero when none were held. */
+  	latestHoldoutError() {
+  		return this.holdoutError;
+  	}
+  	/** How many views were held back. Zero means nothing was validated. */
+  	holdoutSampleCount() {
+  		return this.holdoutCount;
+  	}
+  	/** How varied the collected tilts are. Zero until a second sample lands. */
+  	poseSpread() {
+  		const session = this.session;
+  		return session ? poseSpread(this.samples, session.board) : 0;
+  	}
   	errorCode() {
   		return this.calibrationErrorCode;
   	}
@@ -886,14 +1004,20 @@
   		const lease = this.lease;
   		if (!session || !lease) return;
   		this.calibrationState = "solving";
+  		const { fitted, heldOut } = splitForValidation(this.samples);
   		let solution;
+  		let holdoutError = 0;
   		try {
-  			solution = await (await this.resolveBackend()).solve([...this.samples], session.board, session.imageWidth, session.imageHeight);
+  			const backend = await this.resolveBackend();
+  			solution = await backend.solve(fitted, session.board, session.imageWidth, session.imageHeight);
+  			holdoutError = await backend.validate(heldOut, session.board, solution);
   		} catch (error) {
   			this.fail("solve-failed", error);
   		}
   		if (operation !== this.operation) return;
   		this.reprojectionError = solution.reprojectionErrorPx;
+  		this.holdoutError = holdoutError;
+  		this.holdoutCount = heldOut.length;
   		if (!Number.isFinite(this.reprojectionError) || this.reprojectionError > session.maximumReprojectionErrorPx) {
   			this.calibrationState = "ready";
   			this.reject("reprojection-too-high", `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`);
@@ -1035,6 +1159,15 @@
   	latestReprojectionError(cameraId) {
   		return this.existing(cameraId)?.latestReprojectionError() ?? 0;
   	}
+  	poseSpread(cameraId) {
+  		return this.existing(cameraId)?.poseSpread() ?? 0;
+  	}
+  	latestHoldoutError(cameraId) {
+  		return this.existing(cameraId)?.latestHoldoutError() ?? 0;
+  	}
+  	holdoutSampleCount(cameraId) {
+  		return this.existing(cameraId)?.holdoutSampleCount() ?? 0;
+  	}
   	errorCode(cameraId) {
   		return this.existing(cameraId)?.errorCode() ?? "";
   	}
@@ -1112,6 +1245,32 @@
   function integerInRange(value, minimum, maximum, label) {
   	if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error(`${label} must be an integer from ${minimum} to ${maximum}.`);
   	return value;
+  }
+  /**
+  * Divides the samples into the ones fitted and the ones kept back.
+  *
+  * Spread evenly through the order they were captured rather than taken from
+  * the end. Samples near each other in time are the ones most likely to share a
+  * position, so a hold-out cut from the tail can be the least independent part
+  * of the set -- which would make the check read better than it should.
+  */
+  function splitForValidation(samples) {
+  	const holdOut = Math.min(Math.floor(samples.length * HOLDOUT_FRACTION), samples.length - MINIMUM_SAMPLES);
+  	if (holdOut < 1) return {
+  		fitted: [...samples],
+  		heldOut: []
+  	};
+  	const step = samples.length / holdOut;
+  	const chosen = new Set(Array.from({ length: holdOut }, (_, index) => Math.min(samples.length - 1, Math.floor(index * step + step / 2))));
+  	const fitted = [];
+  	const heldOut = [];
+  	samples.forEach((sample, index) => {
+  		(chosen.has(index) ? heldOut : fitted).push(sample);
+  	});
+  	return {
+  		fitted,
+  		heldOut
+  	};
   }
   function isPromise(value) {
   	return value !== void 0;
@@ -8590,6 +8749,49 @@
   			objectPoints.delete();
   		}
   	}
+  	/**
+  	* Reprojects held-out views with the solved intrinsics.
+  	*
+  	* Each view's pose is solved first, from those intrinsics. That is not
+  	* circular: the pose describes where the board happened to be, which the
+  	* calibration never claimed to know, and every view of a planar target needs
+  	* one before its corners can be predicted at all. What the residual then
+  	* measures is whether the intrinsics account for corners they were not
+  	* fitted to.
+  	*/
+  	async validate(samples, board, solution) {
+  		if (samples.length === 0) return 0;
+  		const cv = await getOpenCv();
+  		const worldPoints = chessboardWorldPoints(board);
+  		const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
+  		const distortion = cv.matFromArray(Math.max(1, solution.distortionCoefficients.length), 1, cv.CV_64F, solution.distortionCoefficients.length > 0 ? solution.distortionCoefficients : [0]);
+  		let squared = 0;
+  		let counted = 0;
+  		const scratch = [cameraMatrix, distortion];
+  		try {
+  			for (const sample of samples) {
+  				const objectPoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC3, worldPoints);
+  				const imagePoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC2, sample.corners.flatMap(({ x, y }) => [x, y]));
+  				const rotation = new cv.Mat();
+  				const translation = new cv.Mat();
+  				const projected = new cv.Mat();
+  				scratch.push(objectPoint, imagePoint, rotation, translation, projected);
+  				if (!cv.solvePnP(objectPoint, imagePoint, cameraMatrix, distortion, rotation, translation)) continue;
+  				cv.projectPoints(objectPoint, rotation, translation, cameraMatrix, distortion, projected);
+  				const predicted = readPointPairs(projected.data32F);
+  				for (let index = 0; index < sample.corners.length; index += 1) {
+  					const observed = sample.corners[index];
+  					const expected = predicted[index];
+  					if (!observed || !expected) continue;
+  					squared += (observed.x - expected.x) ** 2 + (observed.y - expected.y) ** 2;
+  					counted += 1;
+  				}
+  			}
+  		} finally {
+  			for (const matrix of scratch) matrix.delete();
+  		}
+  		return counted > 0 ? Math.sqrt(squared / counted) : 0;
+  	}
   };
   /**
   * Names the solver without constructing it, so that reading the backend
@@ -8669,6 +8871,9 @@
   		sampleCount: (cameraId) => host.sampleCount(cameraId),
   		sampleQuality: (cameraId) => host.sampleQuality(cameraId),
   		reprojectionErrorPx: (cameraId) => host.reprojectionErrorPx(cameraId),
+  		poseSpread: (cameraId) => host.poseSpread(cameraId),
+  		holdoutErrorPx: (cameraId) => host.holdoutErrorPx(cameraId),
+  		holdoutSampleCount: (cameraId) => host.holdoutSampleCount(cameraId),
   		errorCode: (cameraId) => host.errorCode(cameraId),
   		errorMessage: (cameraId) => host.errorMessage(cameraId),
   		profileJson: (cameraId) => host.profileJson(cameraId)
@@ -8766,6 +8971,15 @@
   	cameraCalibrationReprojectionError(args) {
   		return this.controller.latestReprojectionError(normalizeId(args.CAMERA_ID));
   	}
+  	cameraCalibrationPoseSpread(args) {
+  		return this.controller.poseSpread(normalizeId(args.CAMERA_ID));
+  	}
+  	cameraCalibrationHoldoutErrorPx(args) {
+  		return this.controller.latestHoldoutError(normalizeId(args.CAMERA_ID));
+  	}
+  	cameraCalibrationHoldoutSampleCount(args) {
+  		return this.controller.holdoutSampleCount(normalizeId(args.CAMERA_ID));
+  	}
   	cameraCalibrationErrorCode(args) {
   		return this.controller.errorCode(normalizeId(args.CAMERA_ID));
   	}
@@ -8801,6 +9015,9 @@
   			sampleCount: (cameraId) => this.controller.sampleCount(normalizeId(cameraId)),
   			sampleQuality: (cameraId) => this.controller.latestSampleQuality(normalizeId(cameraId)),
   			reprojectionErrorPx: (cameraId) => this.controller.latestReprojectionError(normalizeId(cameraId)),
+  			poseSpread: (cameraId) => this.controller.poseSpread(normalizeId(cameraId)),
+  			holdoutErrorPx: (cameraId) => this.controller.latestHoldoutError(normalizeId(cameraId)),
+  			holdoutSampleCount: (cameraId) => this.controller.holdoutSampleCount(normalizeId(cameraId)),
   			errorCode: (cameraId) => this.controller.errorCode(normalizeId(cameraId)),
   			errorMessage: (cameraId) => this.controller.errorMessage(normalizeId(cameraId)),
   			profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))

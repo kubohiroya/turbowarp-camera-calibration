@@ -34,7 +34,8 @@ function setup(options: Partial<CameraCalibrationExtensionOptions> = {}) {
     captureSample: vi.fn(async (): Promise<CalibrationSample | undefined> => undefined),
     solve: vi.fn(async () => {
       throw new Error('not used');
-    })
+    }),
+    validate: vi.fn(async () => 0)
   };
   const runtime: TurboWarpRuntime = {
     ext_kubohiroyacamerasource: {acquireCamera: vi.fn(async () => lease)},

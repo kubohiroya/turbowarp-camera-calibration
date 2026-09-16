@@ -58,6 +58,22 @@ export interface CalibrationSolveResult {
 }
 
 /**
+ * How a solution fares on views it was not fitted to.
+ *
+ * `reprojectionErrorPx` from a solve measures how well the answer reproduces
+ * the very samples that produced it, which is a statement about fit and not
+ * about the camera. With few samples for the number of parameters, an
+ * overfitted solution scores well on exactly that measure. These are the views
+ * held back from the fit, so their error is the one that can disagree.
+ */
+export interface CalibrationValidationResult {
+  /** RMS reprojection error over the held-out views, in pixels. */
+  reprojectionErrorPx: number;
+  /** How many views were held back. Zero means nothing was validated. */
+  sampleCount: number;
+}
+
+/**
  * The solver seam. Everything above this interface is arithmetic-free control
  * flow, so tests drive the whole procedure without loading OpenCV.
  */
@@ -73,6 +89,18 @@ export interface CalibrationBackendPort {
     imageWidth: number,
     imageHeight: number
   ): Promise<CalibrationSolveResult>;
+  /**
+   * Reprojects views the solve did not use, with the solution it produced.
+   *
+   * Each view needs its own pose, solved from the given intrinsics -- the pose
+   * is not what is being checked, so fitting it here is not circular. What is
+   * checked is whether the intrinsics predict corners they never saw.
+   */
+  validate(
+    samples: readonly CalibrationSample[],
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): Promise<number>;
 }
 
 /**

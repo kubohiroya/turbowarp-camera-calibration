@@ -72,6 +72,22 @@ interface CvApi {
     type: number,
     values: readonly number[]
   ): CvMat;
+  solvePnP(
+    objectPoints: CvMat,
+    imagePoints: CvMat,
+    cameraMatrix: CvMat,
+    distortionCoefficients: CvMat,
+    rotationVector: CvMat,
+    translationVector: CvMat
+  ): boolean;
+  projectPoints(
+    objectPoints: CvMat,
+    rotationVector: CvMat,
+    translationVector: CvMat,
+    cameraMatrix: CvMat,
+    distortionCoefficients: CvMat,
+    imagePoints: CvMat
+  ): void;
   calibrateCamera(
     objectPoints: CvMatVector,
     imagePoints: CvMatVector,
@@ -211,6 +227,91 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
       imagePoints.delete();
       objectPoints.delete();
     }
+  }
+
+  /**
+   * Reprojects held-out views with the solved intrinsics.
+   *
+   * Each view's pose is solved first, from those intrinsics. That is not
+   * circular: the pose describes where the board happened to be, which the
+   * calibration never claimed to know, and every view of a planar target needs
+   * one before its corners can be predicted at all. What the residual then
+   * measures is whether the intrinsics account for corners they were not
+   * fitted to.
+   */
+  public async validate(
+    samples: readonly CalibrationSample[],
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): Promise<number> {
+    if (samples.length === 0) return 0;
+    const cv = await getOpenCv();
+    const worldPoints = chessboardWorldPoints(board);
+    const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
+    const distortion = cv.matFromArray(
+      Math.max(1, solution.distortionCoefficients.length),
+      1,
+      cv.CV_64F,
+      solution.distortionCoefficients.length > 0
+        ? solution.distortionCoefficients
+        : [0]
+    );
+    let squared = 0;
+    let counted = 0;
+    const scratch: CvMat[] = [cameraMatrix, distortion];
+    try {
+      for (const sample of samples) {
+        const objectPoint = cv.matFromArray(
+          sample.corners.length,
+          1,
+          cv.CV_32FC3,
+          worldPoints
+        );
+        const imagePoint = cv.matFromArray(
+          sample.corners.length,
+          1,
+          cv.CV_32FC2,
+          sample.corners.flatMap(({x, y}) => [x, y])
+        );
+        const rotation = new cv.Mat();
+        const translation = new cv.Mat();
+        const projected = new cv.Mat();
+        scratch.push(objectPoint, imagePoint, rotation, translation, projected);
+        if (
+          !cv.solvePnP(
+            objectPoint,
+            imagePoint,
+            cameraMatrix,
+            distortion,
+            rotation,
+            translation
+          )
+        ) {
+          // A view whose pose cannot be solved says nothing about the
+          // intrinsics, so it is left out rather than scored as a large error.
+          continue;
+        }
+        cv.projectPoints(
+          objectPoint,
+          rotation,
+          translation,
+          cameraMatrix,
+          distortion,
+          projected
+        );
+        const predicted = readPointPairs(projected.data32F);
+        for (let index = 0; index < sample.corners.length; index += 1) {
+          const observed = sample.corners[index];
+          const expected = predicted[index];
+          if (!observed || !expected) continue;
+          squared += (observed.x - expected.x) ** 2 + (observed.y - expected.y) ** 2;
+          counted += 1;
+        }
+      }
+    } finally {
+      for (const matrix of scratch) matrix.delete();
+    }
+    return counted > 0 ? Math.sqrt(squared / counted) : 0;
   }
 }
 

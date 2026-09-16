@@ -152,6 +152,18 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     return this.controller.latestReprojectionError(normalizeId(args.CAMERA_ID));
   }
 
+  public cameraCalibrationPoseSpread(args: {CAMERA_ID: unknown}): number {
+    return this.controller.poseSpread(normalizeId(args.CAMERA_ID));
+  }
+
+  public cameraCalibrationHoldoutErrorPx(args: {CAMERA_ID: unknown}): number {
+    return this.controller.latestHoldoutError(normalizeId(args.CAMERA_ID));
+  }
+
+  public cameraCalibrationHoldoutSampleCount(args: {CAMERA_ID: unknown}): number {
+    return this.controller.holdoutSampleCount(normalizeId(args.CAMERA_ID));
+  }
+
   public cameraCalibrationErrorCode(args: {CAMERA_ID: unknown}): string {
     return this.controller.errorCode(normalizeId(args.CAMERA_ID));
   }
@@ -206,6 +218,11 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
       sampleQuality: (cameraId) => this.controller.latestSampleQuality(normalizeId(cameraId)),
       reprojectionErrorPx: (cameraId) =>
         this.controller.latestReprojectionError(normalizeId(cameraId)),
+      poseSpread: (cameraId) => this.controller.poseSpread(normalizeId(cameraId)),
+      holdoutErrorPx: (cameraId) =>
+        this.controller.latestHoldoutError(normalizeId(cameraId)),
+      holdoutSampleCount: (cameraId) =>
+        this.controller.holdoutSampleCount(normalizeId(cameraId)),
       errorCode: (cameraId) => this.controller.errorCode(normalizeId(cameraId)),
       errorMessage: (cameraId) => this.controller.errorMessage(normalizeId(cameraId)),
       profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))

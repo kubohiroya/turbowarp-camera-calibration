@@ -35,16 +35,29 @@ function setup() {
   const captureSample = vi.fn(
     async (): Promise<CalibrationSample | undefined> => sample(sampleIndex++)
   );
-  const solve = vi.fn(async (): Promise<CalibrationSolveResult> => ({
-    intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
-    distortionModel: 'opencv-plumb-bob',
-    distortionCoefficients: [0.01, -0.02, 0, 0, 0],
-    reprojectionErrorPx: 0.75
-  }));
+  // What the solve was actually given, so a test can see the split without
+  // reaching into the mock's call records.
+  const split = {fitted: 0, heldOut: 0};
+  const solve = vi.fn(async (samples: readonly CalibrationSample[]): Promise<CalibrationSolveResult> => {
+    split.fitted = samples.length;
+    return {
+      intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
+      distortionModel: 'opencv-plumb-bob',
+      distortionCoefficients: [0.01, -0.02, 0, 0, 0],
+      reprojectionErrorPx: 0.75
+    };
+  });
+  // Returns a residual proportional to how many views were held back, so a
+  // test can tell a validated solve from one that skipped validation.
+  const validate = vi.fn(async (held: readonly CalibrationSample[]): Promise<number> => {
+    split.heldOut = held.length;
+    return held.length === 0 ? 0 : 0.5 + held.length / 100;
+  });
   const backend: CalibrationBackendPort = {
     name: 'mock-calibration-backend',
     captureSample,
-    solve
+    solve,
+    validate
   };
   const create = vi.fn(async () => backend);
   const acquireCamera = vi.fn(async () => lease);
@@ -81,6 +94,8 @@ function setup() {
     lease,
     release,
     acquireCamera,
+    validate,
+    split,
     capability,
     registerProfile,
     captureSample,
@@ -130,7 +145,7 @@ describe('CameraCalibrationController', () => {
       imageWidth: 800,
       imageHeight: 600,
       imageState: 'raw',
-      intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
+        intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
       distortionModel: 'opencv-plumb-bob',
       distortionCoefficients: [0.01, -0.02, 0, 0, 0],
       quality: {sampleCount: 8, reprojectionErrorPx: 0.75},
@@ -210,7 +225,7 @@ describe('CameraCalibrationController', () => {
 
     const reprojection = setup();
     reprojection.solve.mockResolvedValue({
-      intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
+        intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
       distortionModel: 'none',
       distortionCoefficients: [],
       reprojectionErrorPx: 2
@@ -262,7 +277,7 @@ describe('CameraCalibrationController', () => {
     await flushMicrotasks();
     const cancelling = controller.cancel('camera-1');
     finish?.({
-      intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
+        intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
       distortionModel: 'none',
       distortionCoefficients: [],
       reprojectionErrorPx: 0.5
@@ -391,7 +406,7 @@ describe('CameraCalibrationController', () => {
   it('keeps a session diagnostic when some other profile validates', async () => {
     const {controller, solve} = setup();
     solve.mockResolvedValue({
-      intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
+        intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
       distortionModel: 'none',
       distortionCoefficients: [],
       reprojectionErrorPx: 2
@@ -450,6 +465,78 @@ describe('CameraCalibrationController', () => {
     ).rejects.toThrow(/calibration-not-applicable/u);
     // The rejected import must leave the running session untouched.
     expect(resized.controller.state('camera-1')).toBe('ready');
+  });
+
+  it('refuses to solve a set that was never tilted', async () => {
+    // Eight views of a square-on board, slid around. Every one passes the
+    // novelty check, because that measures how far the corners moved. Solving
+    // from them cannot separate focal length from distance, and the answer
+    // would come back with a small reprojection error all the same.
+    const {controller, captureSample} = setup();
+    let slid = 0;
+    captureSample.mockImplementation(async () => {
+      const index = slid++;
+      return {
+        corners: Array.from({length: 54}, (_, corner) => ({
+          x: 200 + (corner % 9) * 40 + index * 25,
+          y: 150 + Math.floor(corner / 9) * 40 + index * 15
+        })),
+        quality: 0.8,
+        coverage: 0.25,
+        sharpness: 120
+      };
+    });
+    await controller.start(startOptions);
+    await fillSamples(controller);
+    expect(controller.sampleCount('camera-1')).toBe(8);
+    // Thrown rather than rejected: solve checks what it was given before it
+    // starts, the same way it refuses a set that is too small.
+    expect(() => controller.solve('camera-1')).toThrowError(
+      /sample-poses-degenerate/u
+    );
+    expect(controller.errorCode('camera-1')).toBe('sample-poses-degenerate');
+    // Refused, not failed: the samples are still there and the operator can
+    // tilt the board and keep going.
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.sampleCount('camera-1')).toBe(8);
+  });
+
+  it('keeps some views out of the fit and reports them separately', async () => {
+    const {controller, split} = setup();
+    await controller.start(startOptions);
+    await fillSamples(controller);
+    await controller.solve('camera-1');
+    // Eight samples is the minimum to fit, so nothing can be held back
+    // without weakening the fit below what the operator was promised.
+    expect(split).toEqual({fitted: 8, heldOut: 0});
+    expect(controller.holdoutSampleCount('camera-1')).toBe(0);
+    expect(controller.latestHoldoutError('camera-1')).toBe(0);
+  });
+
+  it('holds views back once there are more than the fit needs', async () => {
+    const {controller, split} = setup();
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) {
+      await controller.addSample('camera-1');
+    }
+    await controller.solve('camera-1');
+    // Nothing counted twice, and nothing lost.
+    expect(split).toEqual({fitted: 10, heldOut: 2});
+    expect(controller.holdoutSampleCount('camera-1')).toBe(2);
+    expect(controller.latestHoldoutError('camera-1')).toBeCloseTo(0.52, 6);
+  });
+
+  it('forgets the holdout result when the session is cancelled', async () => {
+    const {controller} = setup();
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) {
+      await controller.addSample('camera-1');
+    }
+    await controller.solve('camera-1');
+    expect(controller.holdoutSampleCount('camera-1')).toBe(2);
+    await controller.cancel('camera-1');
+    expect(controller.holdoutSampleCount('camera-1')).toBe(0);
+    expect(controller.latestHoldoutError('camera-1')).toBe(0);
   });
 
   it('publishes a solved profile through the Camera Source contract', async () => {
@@ -516,12 +603,42 @@ describe('CameraCalibrationController', () => {
   });
 });
 
+/** Eight directions to tilt the board in, so a set of samples varies. */
+const TILTS = [
+  [0.35, 0],
+  [-0.35, 0],
+  [0, 0.35],
+  [0, -0.35],
+  [0.25, 0.25],
+  [-0.25, 0.25],
+  [0.25, -0.25],
+  [-0.25, -0.25]
+] as const;
+
+/**
+ * A 9x6 board as a camera would see it, tilted.
+ *
+ * Perspective rather than a slide: the earlier version of this helper moved the
+ * same square-on grid sideways, which is a set no camera can be calibrated
+ * from. The controller refuses that now, and it refused this fixture -- which
+ * is the point of the refusal.
+ */
 function sample(offset: number): CalibrationSample {
+  const [gx, gy] = TILTS[offset % TILTS.length] ?? [0.35, 0];
   return {
-    corners: Array.from({length: 54}, (_, index) => ({
-      x: 100 + (index % 9) * 40 + offset * 30,
-      y: 100 + Math.floor(index / 9) * 40
-    })),
+    corners: Array.from({length: 54}, (_, index) => {
+      const u = (index % 9) / 8 - 0.5;
+      const v = Math.floor(index / 9) / 5 - 0.5;
+      const depth = 1 + gx * u + gy * v;
+      // Shifted as well as tilted, because a real operator does both and the
+      // novelty check still has to see the board move.
+      const shiftX = ((offset % 3) - 1) * 70;
+      const shiftY = (Math.floor(offset / 3) - 1) * 50;
+      return {
+        x: 400 + shiftX + (320 * u) / depth,
+        y: 300 + shiftY + (240 * v) / depth
+      };
+    }),
     quality: 0.8,
     coverage: 0.25,
     sharpness: 120
