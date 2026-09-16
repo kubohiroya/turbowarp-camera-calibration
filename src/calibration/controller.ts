@@ -5,6 +5,7 @@ import {
   requireProfileRegistry,
   toCameraSourceProfile,
   type CameraFrameSource,
+  type CameraIntrinsicProfileV1,
   type CameraLease
 } from './camera-source.js';
 import {
@@ -269,7 +270,7 @@ class CameraCalibration {
     } catch (error) {
       this.refuseWith(errorCodeFor(error), error);
     }
-    let document: Record<string, unknown>;
+    let document: CameraIntrinsicProfileV1;
     try {
       document = toCameraSourceProfile(profile);
     } catch (error) {

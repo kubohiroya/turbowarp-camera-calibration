@@ -25,10 +25,11 @@ solve, and never when the extension loads or when the backend reporter is read.
 
 ## Camera Source declarations
 
-The camera-sharing contract this extension talks to is imported from
+The contract this extension talks to is imported from
 [`@kubohiroya/turbowarp-camera-source`](https://github.com/kubohiroya/turbowarp-camera-source) at the
-exact version `0.7.0`, through its `./runtime` sub-entry. That entry holds declarations and three
-string constants and no code, so nothing of Camera Source is carried into
+exact version `0.8.0`, through its `./runtime` sub-entry: the camera lease, the runtime capability,
+and the intrinsic profile document. That entry is declarations and a few string constants, and its
+built form imports nothing at all, so nothing of Camera Source reaches
 `dist/camera-calibration.js` beyond those constants. It is imported rather than copied because a
 copy is checked against nothing: this repository's own hand-written copy named a registry method
 Camera Source does not have, and every attempt to publish a profile failed for a reason that had
