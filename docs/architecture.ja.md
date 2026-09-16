@@ -62,7 +62,6 @@ block、argument、menuはserialize前に識別子で整列します。text、de
 ## moduleの構成
 
 ```text
-config/feature-flags.ts          起動時固定のflag。校正は既定OFF
 src/calibration/types.ts         board、sample、solve結果、backendの継ぎ目
 src/calibration/profile.ts       内部校正プロファイル、その検証、旧形式のadapter
 src/calibration/camera-source.ts Camera Source capabilityのclient
@@ -138,13 +137,19 @@ Camera Sourceのcapabilityは必要になった時点でruntimeから参照し�
 solve済みのままであり、すでに失敗したセッションがpublish要求で回復することも
 ありません。
 
-## feature flag
+## この機能拡張を読み込む費用
 
-`config/feature-flags.ts`はmodule評価時に`cameraCalibrationV1`を凍結します。
-既定はOFFです。OFFのときは状態reporterだけを提供して`idle`を返し、校正command
-はすべて明示的に拒否し、leaseを要求せず、OpenCVのruntimeも初期化しません。
-これがロールバック経路です。従来の挙動はflag 1つ分の距離にあり、利用側は
-この機能拡張を読み込まずに旧経路へ戻せます。
+全ブロックとruntime capabilityは、機能拡張の登録時点で公開されます。
+切り替えスイッチはありません。
+
+登録自体は安価です。OpenCVのruntimeは最初のサンプル取得かsolveで初めて生成
+されるので、状態やbackend名を読むだけのprojectでは初期化されません。カメラの
+leaseも校正を開始するまで要求しません。これらはflagが守っているのではなく、
+コードがどこで生成しているかによって成り立っています。
+
+ロールバックは「この機能拡張を読み込まない」ことです。自前の校正経路を残して
+いる利用側は、projectから外すだけで旧経路へ戻せます。これは委譲するかどうかと
+いう、すでに下している判断と同じものです。
 
 ## drift検出
 

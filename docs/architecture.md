@@ -65,7 +65,6 @@ references.
 ## Module layout
 
 ```text
-config/feature-flags.ts          startup-fixed flags, calibration OFF by default
 src/calibration/types.ts         board, sample, solve result, backend seam
 src/calibration/profile.ts       the intrinsic profile, its validator, legacy adapter
 src/calibration/camera-source.ts the Camera Source capability client
@@ -143,14 +142,20 @@ state. Publishing is not a session operation: a solved profile that Camera
 Source could not accept is still solved, and a session that already failed is
 not repaired by asking to publish.
 
-## Feature flag
+## What loading this extension costs
 
-`config/feature-flags.ts` freezes `cameraCalibrationV1` at module evaluation,
-default OFF. With the flag OFF the extension publishes only the state reporter,
-which answers `idle`; every calibration command refuses explicitly; no lease is
-requested and the OpenCV runtime is never initialized. This is the rollback
-path: the previous behavior is one flag away, and the consumer side can fall
-back to its own calibration without loading this extension at all.
+Every block and the runtime capability are published as soon as the extension
+registers. There is no switch.
+
+Registering is cheap. The OpenCV runtime is created on the first sample or
+solve and never before, so a project that only reads the state or the backend
+name never initializes it, and no camera lease is requested until a calibration
+starts. Those hold because of where the code creates things, not because of a
+flag guarding them.
+
+Rolling back means not loading this extension. A consumer that still has its
+own calibration path falls back by leaving this one out of the project, which
+is the same decision it was already making about whether to delegate.
 
 ## Drift detection
 
