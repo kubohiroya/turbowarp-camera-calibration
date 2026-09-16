@@ -1296,6 +1296,61 @@
   	return value !== void 0;
   }
   //#endregion
+  //#region src/calibration/opencv-symbols.ts
+  /**
+  * Everything this backend reaches for on the OpenCV module.
+  *
+  * Checked at load, because the alternative is what happened: the guard asked
+  * only whether `getBuildInformation` was a function, which every build answers
+  * yes to, and three functions the backend calls were absent from the pinned
+  * build for five releases. Nothing failed until an operator pressed a button,
+  * and then it failed as "is not a function" with no indication that the build
+  * was the problem.
+  *
+  * Constants are listed too. A missing one is a silent `undefined` handed to a
+  * function that will read it as a zero flag, which is worse than a crash.
+  */
+  var REQUIRED_OPENCV_SYMBOLS = {
+  	functions: [
+  		"getBuildInformation",
+  		"imread",
+  		"cvtColor",
+  		"Laplacian",
+  		"meanStdDev",
+  		"matFromArray",
+  		"getPredefinedDictionary",
+  		"calibrateCameraExtended",
+  		"solvePnP",
+  		"projectPoints"
+  	],
+  	constructors: [
+  		"Mat",
+  		"MatVector",
+  		"Size",
+  		"aruco_CharucoBoard",
+  		"aruco_CharucoDetector",
+  		"aruco_CharucoParameters",
+  		"aruco_DetectorParameters",
+  		"aruco_RefineParameters"
+  	],
+  	constants: [
+  		"COLOR_RGBA2GRAY",
+  		"CV_32FC2",
+  		"CV_32FC3",
+  		"CV_64F",
+  		"DICT_4X4_50"
+  	]
+  };
+  /** Which of the required symbols the module does not provide. */
+  function missingOpenCvSymbols(value) {
+  	if (typeof value !== "object" || value === null) return ["(not a module)"];
+  	const module = value;
+  	const missing = [];
+  	for (const name of [...REQUIRED_OPENCV_SYMBOLS.functions, ...REQUIRED_OPENCV_SYMBOLS.constructors]) if (typeof module[name] !== "function") missing.push(name);
+  	for (const name of REQUIRED_OPENCV_SYMBOLS.constants) if (typeof module[name] !== "number") missing.push(name);
+  	return missing;
+  }
+  //#endregion
   //#region __vite-browser-external
   var require___vite_browser_external = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   	module.exports = {};
@@ -8899,14 +8954,12 @@
   	const imported = await Promise.resolve().then(() => /* @__PURE__ */ __toESM(require_opencv(), 1));
   	const candidate = imported.default ?? imported;
   	const resolved = isThenable(candidate) ? await candidate : candidate;
-  	if (!isCvApi(resolved)) throw new Error("The pinned OpenCV.js WASM module did not initialize.");
+  	const missing = missingOpenCvSymbols(resolved);
+  	if (missing.length > 0) throw new Error(`The pinned OpenCV.js build does not provide: ${missing.join(", ")}. These are registered by the WebAssembly module at run time, so they appear in no source file and no different call site will find them: the build itself has to change.`);
   	return resolved;
   }
   function isThenable(value) {
   	return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
-  }
-  function isCvApi(value) {
-  	return typeof value === "object" && value !== null && "getBuildInformation" in value && typeof value.getBuildInformation === "function";
   }
   function readPointPairs(values) {
   	const result = [];

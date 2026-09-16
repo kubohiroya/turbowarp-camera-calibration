@@ -2,6 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    // The runtime entry ships declarations, so it must not reach a .ts import.
+    "allowImportingTsExtensions": false,
     "declaration": true,
     "outDir": "lib",
     "removeComments": false

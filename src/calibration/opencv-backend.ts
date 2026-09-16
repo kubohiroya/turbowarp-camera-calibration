@@ -1,4 +1,5 @@
 import {distortionModelForCoefficientCount} from './profile.js';
+import {missingOpenCvSymbols} from './opencv-symbols.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -429,6 +430,7 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+
 /**
  * Names the solver without constructing it, so that reading the backend
  * reporter — or loading the extension at all — never initializes the OpenCV
@@ -451,10 +453,15 @@ async function initializeOpenCv(): Promise<CvApi> {
   const imported = importedOpenCv as unknown as {default?: unknown; then?: unknown};
   const candidate = imported.default ?? imported;
   const resolved = isThenable(candidate) ? await candidate : candidate;
-  if (!isCvApi(resolved)) {
-    throw new Error('The pinned OpenCV.js WASM module did not initialize.');
+  const missing = missingOpenCvSymbols(resolved);
+  if (missing.length > 0) {
+    throw new Error(
+      `The pinned OpenCV.js build does not provide: ${missing.join(', ')}. ` +
+        'These are registered by the WebAssembly module at run time, so they appear in no source ' +
+        'file and no different call site will find them: the build itself has to change.'
+    );
   }
-  return resolved;
+  return resolved as CvApi;
 }
 
 function isThenable(value: unknown): value is Promise<unknown> {
@@ -463,15 +470,6 @@ function isThenable(value: unknown): value is Promise<unknown> {
     value !== null &&
     'then' in value &&
     typeof value.then === 'function'
-  );
-}
-
-function isCvApi(value: unknown): value is CvApi {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'getBuildInformation' in value &&
-    typeof (value as {getBuildInformation: unknown}).getBuildInformation === 'function'
   );
 }
 

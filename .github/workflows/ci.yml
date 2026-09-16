@@ -20,3 +20,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
+      # The only check that starts a browser, and the only one that can see
+      # whether the pinned OpenCV build provides what the backend calls. Its
+      # functions are registered by the WebAssembly module at run time, so they
+      # are in no source file, and the module does not finish initializing under
+      # Node. Kept out of `pnpm check` so a local run needs no browser; kept
+      # here so a dependency bump cannot pass review without it.
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run opencv:check
