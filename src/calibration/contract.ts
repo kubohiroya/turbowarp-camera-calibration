@@ -45,6 +45,44 @@ export type CalibrationErrorCode =
   | 'publish-failed';
 
 /**
+ * What the operator should do next, while the shutter watches by itself.
+ *
+ * Deliberately not a `CalibrationErrorCode`. A frame the shutter declines to
+ * take is not a failure -- most frames are declined, because most of the time
+ * the board is between two useful positions. Recording those as errors would
+ * leave an error showing for nearly the whole session, which is the same as
+ * showing none.
+ *
+ * These are instructions rather than diagnoses: the operator is holding a
+ * board in front of a camera and cannot read a reason and work out a remedy.
+ */
+export type CalibrationGuidance =
+  | ''
+  /** Nothing recognisable in the frame. */
+  | 'show-the-board'
+  /** Found, but blurred or too small to trust the corners of. */
+  | 'hold-steadier'
+  /** A view too close to one already collected to add anything. */
+  | 'move-or-tilt'
+  /**
+   * Enough views, all from nearly the same angle.
+   *
+   * Distinct from `move-or-tilt`: sliding the board sideways answers that one
+   * and not this one. Focal length and distance stay inseparable until the
+   * board is turned, because a small board held close and a large one held far
+   * away make the same image.
+   */
+  | 'tilt-more'
+  /** Collecting; nothing is wrong. */
+  | 'keep-going'
+  /** A solve is running on the views collected so far. */
+  | 'solving'
+  /** The shutter stopped at the sample limit without reaching an answer. */
+  | 'limit-reached'
+  /** Solved and validated. Nothing further is needed. */
+  | 'complete';
+
+/**
  * Where the scale of a measured pose came from.
  *
  * Intrinsic calibration needs no real-world dimensions, and the operator is

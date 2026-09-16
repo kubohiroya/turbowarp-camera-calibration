@@ -204,7 +204,19 @@ describe('the runtime capability', () => {
   it('refuses a version it does not implement, rather than answering anyway', () => {
     const {runtime} = setup();
     const capability = readCameraCalibrationCapability(runtime);
-    expect(() => capability?.requireVersion(2)).toThrowError(/Unsupported/u);
+    expect(() => capability?.requireVersion(runtimeCapabilityVersion + 1)).toThrowError(
+      /Unsupported/u
+    );
+    expect(() => capability?.requireVersion(0)).toThrowError(/Unsupported/u);
+  });
+
+  it('answers a consumer written against an earlier version', () => {
+    // Every change to this surface has added members, so version 1's contract
+    // is still kept in full. Refusing it would force a consumer to be released
+    // in step with this extension to gain nothing.
+    const {runtime} = setup();
+    const capability = readCameraCalibrationCapability(runtime);
+    expect(capability?.requireVersion(1)).toBe(capability);
   });
 
   it('is published as soon as the extension is registered', () => {

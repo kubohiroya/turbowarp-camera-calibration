@@ -13,6 +13,16 @@
       ]
     },
     {
+      "opcode": "automaticCameraCalibration",
+      "blockType": "BOOLEAN",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cameraBoardPoseJson",
       "blockType": "REPORTER",
       "arguments": [
@@ -39,6 +49,16 @@
     },
     {
       "opcode": "cameraCalibrationErrorCode",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationGuidance",
       "blockType": "REPORTER",
       "arguments": [
         {
@@ -236,6 +256,16 @@
       ]
     },
     {
+      "opcode": "startAutomaticCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "startCameraCalibration",
       "blockType": "COMMAND",
       "arguments": [
@@ -266,6 +296,16 @@
         {
           "id": "SQUARE_METERS",
           "type": "NUMBER"
+        }
+      ]
+    },
+    {
+      "opcode": "stopAutomaticCameraCalibration",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
         }
       ]
     }
