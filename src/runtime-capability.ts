@@ -13,6 +13,7 @@
  * already standing in front of.
  */
 import type {
+  BoardPoseOptions,
   CalibrationErrorCode,
   CalibrationStartOptions,
   CalibrationState
@@ -91,6 +92,21 @@ export interface CameraCalibrationCapabilityV1 {
   errorMessage(cameraId: string): string;
   /** The solved or imported profile, or an empty string when there is none. */
   profileJson(cameraId: string): string;
+
+  /**
+   * Measures where the board is, in the camera's own frame.
+   *
+   * Takes its own camera lease and gives it straight back, because this is not
+   * part of a calibration session -- a calibration needs the board to move, and
+   * while one is being collected there is no single position to report. Call it
+   * once the board is where it will stay.
+   *
+   * Not a world pose. Where a camera stands in a frame several cameras share is
+   * a different question, answered by whoever solves placement.
+   */
+  measureBoardPose(options: BoardPoseOptions): Promise<void>;
+  /** The last measured pose as JSON, or an empty string when none was taken. */
+  boardPoseJson(cameraId: string): string;
 }
 
 export function createRuntimeCapability(
@@ -125,7 +141,9 @@ export function createRuntimeCapability(
     holdoutSampleCount: (cameraId) => host.holdoutSampleCount(cameraId),
     errorCode: (cameraId) => host.errorCode(cameraId),
     errorMessage: (cameraId) => host.errorMessage(cameraId),
-    profileJson: (cameraId) => host.profileJson(cameraId)
+    profileJson: (cameraId) => host.profileJson(cameraId),
+    measureBoardPose: (options) => host.measureBoardPose(options),
+    boardPoseJson: (cameraId) => host.boardPoseJson(cameraId)
   };
   return Object.freeze(capability);
 }

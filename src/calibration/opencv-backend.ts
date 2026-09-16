@@ -3,6 +3,7 @@ import {OPENCV_BACKEND_NAME} from './opencv-symbols.js';
 
 export {OPENCV_BACKEND_NAME};
 import type {
+  BoardPoseSolution,
   CalibrationBoard,
   CalibrationCorner,
   CalibrationPixels,
@@ -331,6 +332,90 @@ export class OpenCvChessboardCalibration {
   }
 
   /**
+   * Finds the board in one frame and solves where it is.
+   *
+   * The same arithmetic the hold-out check already does, asked of one live
+   * frame instead of a stored sample, and reported rather than reduced to a
+   * residual. Nothing new is computed: this exists because the answer was being
+   * thrown away.
+   */
+  public async measurePose(
+    frame: CalibrationPixels,
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): Promise<BoardPoseSolution | undefined> {
+    const cv = await this.ready;
+    const source = cv.matFromImageData(frame);
+    const gray = new cv.Mat();
+    const corners = new cv.Mat();
+    const ids = new cv.Mat();
+    const scratch: CvMat[] = [source, gray, corners, ids];
+    try {
+      cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
+      this.detectorFor(cv, board).detectBoard(gray, corners, ids);
+      if (ids.rows < MINIMUM_CORNERS) return undefined;
+      const observed = readPointPairs(corners.data32F);
+      const identifiers: number[] = Array.from(ids.data32S);
+      const worldPoints = this.worldPointsFor(cv, board);
+
+      const objectPoint = cv.matFromArray(
+        identifiers.length,
+        1,
+        cv.CV_32FC3,
+        identifiers.flatMap((id) => worldPoints[id] ?? [0, 0, 0])
+      );
+      const imagePoint = cv.matFromArray(
+        observed.length,
+        1,
+        cv.CV_32FC2,
+        observed.flatMap(({x, y}) => [x, y])
+      );
+      const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
+      const distortion = cv.matFromArray(
+        Math.max(1, solution.distortionCoefficients.length),
+        1,
+        cv.CV_64F,
+        solution.distortionCoefficients.length > 0
+          ? solution.distortionCoefficients
+          : [0]
+      );
+      const rotation = new cv.Mat();
+      const translation = new cv.Mat();
+      const projected = new cv.Mat();
+      scratch.push(objectPoint, imagePoint, cameraMatrix, distortion, rotation, translation, projected);
+
+      if (!cv.solvePnP(objectPoint, imagePoint, cameraMatrix, distortion, rotation, translation)) {
+        return undefined;
+      }
+      cv.projectPoints(objectPoint, rotation, translation, cameraMatrix, distortion, projected);
+      const predicted = readPointPairs(projected.data32F);
+      let squared = 0;
+      let counted = 0;
+      for (let index = 0; index < observed.length; index += 1) {
+        const seen = observed[index];
+        const expected = predicted[index];
+        if (!seen || !expected) continue;
+        squared += (seen.x - expected.x) ** 2 + (seen.y - expected.y) ** 2;
+        counted += 1;
+      }
+
+      return {
+        rotation: rotationMatrixFrom(readMatrix(rotation, 3)),
+        translationMeters: readMatrix(translation, 3),
+        cornerCount: identifiers.length,
+        reprojectionErrorPx: counted > 0 ? Math.sqrt(squared / counted) : 0,
+        observedPoints: identifiers.map((id, index) => ({
+          id,
+          u: observed[index]?.x ?? 0,
+          v: observed[index]?.y ?? 0
+        }))
+      };
+    } finally {
+      for (const matrix of scratch) matrix.delete();
+    }
+  }
+
+  /**
    * Reprojects held-out views with the solved intrinsics.
    *
    * Each view's pose is solved first, from those intrinsics. That is not
@@ -451,4 +536,28 @@ function boardCoverage(
     ((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))) /
     (width * height)
   );
+}
+
+/**
+ * Rodrigues: the rotation vector OpenCV returns, as a matrix.
+ *
+ * Done here rather than through cv.Rodrigues so the exported symbol list stays
+ * as short as it is -- every name on it is a name the OpenCV build has to
+ * carry. The formula is R = I cos(t) + sin(t)[k] + (1 - cos(t)) k k^T, where t
+ * is the vector's length and k its direction.
+ */
+function rotationMatrixFrom(vector: readonly number[]): number[] {
+  const [x = 0, y = 0, z = 0] = vector;
+  const theta = Math.hypot(x, y, z);
+  // A zero vector is no rotation at all, and normalizing it would divide by it.
+  if (theta < 1e-12) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const [kx, ky, kz] = [x / theta, y / theta, z / theta];
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  const t = 1 - c;
+  return [
+    c + kx * kx * t, kx * ky * t - kz * s, kx * kz * t + ky * s,
+    ky * kx * t + kz * s, c + ky * ky * t, ky * kz * t - kx * s,
+    kz * kx * t - ky * s, kz * ky * t + kx * s, c + kz * kz * t
+  ];
 }

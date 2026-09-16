@@ -57,7 +57,8 @@ function setup() {
     name: 'mock-calibration-backend',
     captureSample,
     solve,
-    validate
+    validate,
+    measurePose: vi.fn(async () => undefined)
   };
   const create = vi.fn(async () => backend);
   const acquireCamera = vi.fn(async () => lease);

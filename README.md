@@ -102,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.7.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.8.0
 ```
 
 Load the standalone bundle from:
@@ -114,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.7.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.8.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -247,6 +247,21 @@ Registers the solved profile with Camera Source, which owns the profile contract
 | Type | Command |
 | Opcode | `publishCameraCalibration` |
 | `CAMERA_ID` | String, default: `default` |
+
+### `measure camera [CAMERA_ID] board pose board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m scale [SCALE_SOURCE]`
+
+Measures where the board is, in the camera's own frame, using the calibration already solved for that camera. Take it after the board is where it will stay: a calibration needs the board to move, so while one is being collected there is no single position to report. This is not a world pose. Scale comes entirely from the square size, so say whether that was measured or nominal.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `measureCameraBoardPose` |
+| `CAMERA_ID` | String, default: `default` |
+| `COLUMNS` | Number, default: `9` |
+| `ROWS` | Number, default: `6` |
+| `SQUARE_METERS` | Number, default: `0.025` |
+| `MARKER_METERS` | Number, default: `0.018` |
+| `SCALE_SOURCE` | String, default: `nominal` |
 
 ### `import calibration profile [JSON] for camera [CAMERA_ID]`
 
@@ -387,6 +402,16 @@ Exports the stored intrinsic profile for that camera, or an empty string when no
 |---|---|
 | Type | Reporter |
 | Opcode | `cameraCalibrationJson` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera [CAMERA_ID] board pose JSON`
+
+Returns the last measured board pose as JSON, or an empty string when none was measured. The pose is the board in the camera's frame, never a world pose, and it carries the observed corners and whether its scale was measured or nominal so it can be re-solved elsewhere.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraBoardPoseJson` |
 | `CAMERA_ID` | String, default: `default` |
 
 <!-- END GENERATED BLOCKS -->

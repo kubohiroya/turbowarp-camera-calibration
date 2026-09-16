@@ -13,6 +13,7 @@ import type {OpenCvChessboardCalibration} from './opencv-backend.js';
 // onto this thread, which is the whole thing this file exists to prevent.
 import {OPENCV_BACKEND_NAME} from './opencv-symbols.js';
 import type {
+  BoardPoseSolution,
   CalibrationBackendFactory,
   CalibrationBackendPort,
   CalibrationBoard,
@@ -39,6 +40,19 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     return this.solver().captureSample(
       transfer(pixels, [pixels.data.buffer]),
       board
+    );
+  }
+
+  public async measurePose(
+    frame: CalibrationFrame,
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): Promise<BoardPoseSolution | undefined> {
+    const pixels = this.readFrame(frame);
+    return this.solver().measurePose(
+      transfer(pixels, [pixels.data.buffer]),
+      board,
+      solution
     );
   }
 

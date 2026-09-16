@@ -98,6 +98,38 @@
       }
     },
     {
+      "opcode": "measureCameraBoardPose",
+      "blockType": "COMMAND",
+      "text": "measure camera [CAMERA_ID] board pose board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m scale [SCALE_SOURCE]",
+      "description": "Measures where the board is, in the camera's own frame, using the calibration already solved for that camera. Take it after the board is where it will stay: a calibration needs the board to move, so while one is being collected there is no single position to report. This is not a world pose. Scale comes entirely from the square size, so say whether that was measured or nominal.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        },
+        "COLUMNS": {
+          "type": "NUMBER",
+          "defaultValue": 9
+        },
+        "ROWS": {
+          "type": "NUMBER",
+          "defaultValue": 6
+        },
+        "SQUARE_METERS": {
+          "type": "NUMBER",
+          "defaultValue": 0.025
+        },
+        "MARKER_METERS": {
+          "type": "NUMBER",
+          "defaultValue": 0.018
+        },
+        "SCALE_SOURCE": {
+          "type": "STRING",
+          "defaultValue": "nominal"
+        }
+      }
+    },
+    {
       "opcode": "importCameraCalibration",
       "blockType": "COMMAND",
       "text": "import calibration profile [JSON] for camera [CAMERA_ID]",
@@ -261,6 +293,18 @@
       "blockType": "REPORTER",
       "text": "camera [CAMERA_ID] calibration profile JSON",
       "description": "Exports the stored intrinsic profile for that camera, or an empty string when none exists.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        }
+      }
+    },
+    {
+      "opcode": "cameraBoardPoseJson",
+      "blockType": "REPORTER",
+      "text": "camera [CAMERA_ID] board pose JSON",
+      "description": "Returns the last measured board pose as JSON, or an empty string when none was measured. The pose is the board in the camera's frame, never a world pose, and it carries the observed corners and whether its scale was measured or nominal so it can be re-solved elsewhere.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",
