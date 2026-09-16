@@ -25,11 +25,25 @@ export interface CalibrationBoard {
   markerSizeMeters: number;
 }
 
-/** One still image taken from the leased camera. */
+/** One still image taken from the leased camera, as the element that holds it. */
 export interface CalibrationFrame {
   element: HTMLVideoElement;
   width: number;
   height: number;
+}
+
+/**
+ * The same image as bytes.
+ *
+ * The solver runs on a worker, where there is no document and no video element
+ * to read. The thread that owns the camera reads the frame and sends these,
+ * which also makes the hand-off explicit: a worker holding a stale buffer is
+ * visible in a way a worker holding a stale element reference would not be.
+ */
+export interface CalibrationPixels {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
 }
 
 export interface CalibrationCorner {

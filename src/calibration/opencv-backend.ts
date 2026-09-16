@@ -1,20 +1,15 @@
 import {distortionModelForCoefficientCount} from './profile.js';
-import {missingOpenCvSymbols} from './opencv-symbols.js';
+import {OPENCV_BACKEND_NAME} from './opencv-symbols.js';
+
+export {OPENCV_BACKEND_NAME};
 import type {
-  CalibrationBackendFactory,
-  CalibrationBackendPort,
   CalibrationBoard,
   CalibrationCorner,
-  CalibrationFrame,
+  CalibrationPixels,
   CalibrationSample,
   CalibrationSolveResult
 } from './types.js';
 
-/**
- * The single pinned production solver. The version is part of the identifier so
- * that a project can record which build produced a profile.
- */
-export const OPENCV_BACKEND_NAME = 'opencv-js-wasm-4.12.0-charuco';
 
 /**
  * The fewest corners a view has to show to be worth keeping.
@@ -76,7 +71,7 @@ interface CvApi {
   TermCriteria_EPS: number;
   TermCriteria_MAX_ITER: number;
   TermCriteria: new (type: number, maxCount: number, epsilon: number) => unknown;
-  imread(source: HTMLCanvasElement): CvMat;
+  matFromImageData(image: {width: number; height: number; data: Uint8ClampedArray}): CvMat;
   cvtColor(source: CvMat, destination: CvMat, code: number): void;
   DICT_4X4_50: number;
   getPredefinedDictionary(name: number): unknown;
@@ -139,8 +134,6 @@ interface CvApi {
   getBuildInformation(): string;
 }
 
-let openCvPromise: Promise<CvApi> | undefined;
-
 /**
  * Detects the chessboard and solves the camera intrinsics with OpenCV.
  *
@@ -148,8 +141,20 @@ let openCvPromise: Promise<CvApi> | undefined;
  * discarded. They describe where the board happened to sit during calibration,
  * not where the camera stands, and this extension publishes intrinsics only.
  */
-export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPort {
+export class OpenCvChessboardCalibration {
   public readonly name = OPENCV_BACKEND_NAME;
+
+  /**
+   * The runtime, handed in rather than reached for.
+   *
+   * It has to be started while the worker's own modules are being evaluated.
+   * Asking for it later -- from inside the message handler that the first
+   * sample arrives on -- wedges the worker: measured past two minutes with the
+   * worker's own timers no longer firing, so it is a blocked thread and not a
+   * promise nobody resolved. Taking it as an argument is what makes reaching
+   * for it late impossible to write.
+   */
+  public constructor(private readonly ready: Promise<CvApi>) {}
 
   /**
    * One detector per board, built on first use.
@@ -205,18 +210,14 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
   }
 
   public async captureSample(
-    frame: CalibrationFrame,
+    frame: CalibrationPixels,
     board: CalibrationBoard
   ): Promise<CalibrationSample | undefined> {
-    const cv = await getOpenCv();
-    const canvas = document.createElement('canvas');
-    canvas.width = frame.width;
-    canvas.height = frame.height;
-    const context = canvas.getContext('2d', {willReadFrequently: true});
-    if (!context) throw new Error('A 2D canvas context is unavailable.');
-    context.drawImage(frame.element, 0, 0, frame.width, frame.height);
-
-    const source = cv.imread(canvas);
+    const cv = await this.ready;
+    // Pixels, not an element. cv.imread reaches for document and
+    // HTMLImageElement, neither of which exists where this now runs; the frame
+    // is read on the thread that owns the video and the bytes are sent here.
+    const source = cv.matFromImageData(frame);
     const gray = new cv.Mat();
     const corners = new cv.Mat();
     const ids = new cv.Mat();
@@ -252,8 +253,6 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
       corners.delete();
       gray.delete();
       source.delete();
-      canvas.width = 0;
-      canvas.height = 0;
     }
   }
 
@@ -263,7 +262,7 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
     imageWidth: number,
     imageHeight: number
   ): Promise<CalibrationSolveResult> {
-    const cv = await getOpenCv();
+    const cv = await this.ready;
     const objectPoints = new cv.MatVector();
     const imagePoints = new cv.MatVector();
     const rotationVectors = new cv.MatVector();
@@ -347,7 +346,7 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
     solution: CalibrationSolveResult
   ): Promise<number> {
     if (samples.length === 0) return 0;
-    const cv = await getOpenCv();
+    const cv = await this.ready;
     const worldPoints = this.worldPointsFor(cv, board);
     const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
     const distortion = cv.matFromArray(
@@ -431,47 +430,7 @@ function clamp01(value: number): number {
 }
 
 
-/**
- * Names the solver without constructing it, so that reading the backend
- * reporter — or loading the extension at all — never initializes the OpenCV
- * WebAssembly runtime.
- */
-export const openCvBackendFactory: CalibrationBackendFactory = {
-  name: OPENCV_BACKEND_NAME,
-  async create(): Promise<CalibrationBackendPort> {
-    return new OpenCvChessboardCalibrationBackend();
-  }
-};
 
-function getOpenCv(): Promise<CvApi> {
-  openCvPromise ??= initializeOpenCv();
-  return openCvPromise;
-}
-
-async function initializeOpenCv(): Promise<CvApi> {
-  const importedOpenCv = await import('@techstark/opencv-js');
-  const imported = importedOpenCv as unknown as {default?: unknown; then?: unknown};
-  const candidate = imported.default ?? imported;
-  const resolved = isThenable(candidate) ? await candidate : candidate;
-  const missing = missingOpenCvSymbols(resolved);
-  if (missing.length > 0) {
-    throw new Error(
-      `The pinned OpenCV.js build does not provide: ${missing.join(', ')}. ` +
-        'These are registered by the WebAssembly module at run time, so they appear in no source ' +
-        'file and no different call site will find them: the build itself has to change.'
-    );
-  }
-  return resolved as CvApi;
-}
-
-function isThenable(value: unknown): value is Promise<unknown> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'then' in value &&
-    typeof value.then === 'function'
-  );
-}
 
 function readPointPairs(values: Float32Array): CalibrationCorner[] {
   const result: CalibrationCorner[] = [];

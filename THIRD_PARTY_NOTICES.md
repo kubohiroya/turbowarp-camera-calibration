@@ -5,23 +5,29 @@ including the components listed below.
 
 ## OpenCV.js
 
-The chessboard detector and the `calibrateCamera` solver come from OpenCV.js, bundled through
-[`@techstark/opencv-js`](https://github.com/TechStark/opencv-js) at the exact version
-`4.12.0-release.1`. The version is pinned in `package.json` and is part of the backend identifier
-that the `camera calibration backend` block reports, so a project can record which build produced a
-profile.
+`vendor/opencv.js` is built from [OpenCV](https://github.com/opencv/opencv) at tag `4.12.0`
+by [`tools/opencv/build.sh`](tools/opencv/build.sh), in a pinned Emscripten container. It is not a
+published npm package: the stock `@techstark/opencv-js` build never finishes initializing inside a
+Web Worker, which is where the solver has to run, and it is 10.9 MB of general-purpose OpenCV for
+the twenty-three symbols this extension calls. Ours is 3.85 MB and starts in a worker in 18 ms.
+
+The build drops OpenCV's unconditional `-s DEMANGLE_SUPPORT=1`, a setting Emscripten has removed;
+it only added demangled names to stack traces. Nothing else in OpenCV's sources is modified.
 
 OpenCV is distributed under the Apache License 2.0:
 
 - <https://github.com/opencv/opencv>
-- <https://github.com/TechStark/opencv-js>
 - <https://www.apache.org/licenses/LICENSE-2.0>
 
-The build is about 10.4 MB, which is why the calibration procedure lives in this extension rather
-than in `@kubohiroya/turbowarp-camera-source`. A TurboWarp extension ships as one standalone file,
-so a dynamic `import()` is inlined into the same file instead of being split into a separate chunk.
-The import is still lazy at run time: the WebAssembly runtime is initialized on the first sample or
-solve, and never when the extension loads or when the backend reporter is read.
+The WebAssembly is inlined into `dist/camera-calibration.js`, because a TurboWarp extension ships as
+one standalone file and a separate `.wasm` would have nowhere to be fetched from. The runtime is
+still initialized lazily: the worker is not created until a calibration starts, so loading the
+extension or reading the backend reporter never touches it.
+
+## Comlink
+
+The worker is addressed through [Comlink](https://github.com/GoogleChromeLabs/comlink) at the exact
+version `4.4.2`, distributed under the Apache License 2.0.
 
 ## Camera Source declarations
 

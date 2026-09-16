@@ -13,25 +13,31 @@ describe('the committed extension bundle', () => {
     expect(bundle).not.toMatch(/^\s*import\s/mu);
   });
 
-  it('carries the pinned OpenCV build and initializes it only on demand', async () => {
+  it('carries our own OpenCV build, and never starts it on this thread', async () => {
     const bundle = await readFile(bundleUrl, 'utf8');
     const {size} = await stat(bundleUrl);
-    // The solver is the reason this extension is separate from Camera Source.
-    //
-    // This only says the bundle calls the name. It cannot say the OpenCV build
-    // provides it -- embind registers those at run time, so they appear in
-    // neither the bundle text nor opencv.js's text. An earlier version of this
-    // line asserted `findChessboardCorners`, and passed for five releases while
-    // that function was absent from the pinned build and no sample could be
-    // taken at all. What proves the other half is a browser.
+    // These only say the bundle calls the names. Whether the build provides
+    // them is a question for `pnpm opencv:check`, which asks a browser: embind
+    // registers OpenCV's functions at run time, so they appear in neither
+    // file's text. An earlier version of this line asserted
+    // `findChessboardCorners`, and passed for five releases while that
+    // function was absent from the pinned build and no sample could be taken.
     expect(bundle).toContain('detectBoard');
     expect(bundle).toContain('calibrateCameraExtended');
-    expect(size).toBeGreaterThan(5_000_000);
-    // OpenCV lives behind a lazy CommonJS factory. Exactly one call site, and
-    // it is the dynamic import inside the backend, so loading the extension or
-    // reading the backend reporter never evaluates the WebAssembly runtime.
-    const callSites = bundle.match(/require_opencv\(\)/gu) ?? [];
-    expect(callSites).toHaveLength(1);
-    expect(bundle).toMatch(/Promise\.resolve\(\)\.then\(\(\) => [^\n]*require_opencv\(\)/u);
+
+    // Bracketed rather than floored. Too small means the solver fell out of
+    // the bundle; too large means we are back on the stock 10.9 MB build,
+    // which is three times the size and cannot start in a worker at all.
+    expect(size).toBeGreaterThan(3_000_000);
+    expect(size).toBeLessThan(6_000_000);
+
+    // OpenCV is evaluated inside the worker, from vendored source, and the
+    // worker is not created until a calibration starts. So nothing on the
+    // thread that draws the stage ever touches the WebAssembly runtime --
+    // which is the point: detection is twenty milliseconds and a solve over a
+    // second, and both would be visible in the camera preview.
+    expect(bundle).toContain('ENVIRONMENT_IS_WORKER');
+    expect(bundle).not.toMatch(/require_opencv\(\)/u);
+
   });
 });

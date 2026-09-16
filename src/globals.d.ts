@@ -36,3 +36,19 @@ interface ScratchApi {
 }
 
 declare const Scratch: ScratchApi;
+
+/**
+ * Vite's inlined worker import.
+ *
+ * `?worker&inline` yields a constructor and embeds the worker's code in the
+ * bundle, which is what keeps this extension one standalone file.
+ */
+declare module '*?worker&inline' {
+  const WorkerConstructor: new () => Worker;
+  export default WorkerConstructor;
+}
+
+declare module '*?raw' {
+  const source: string;
+  export default source;
+}
