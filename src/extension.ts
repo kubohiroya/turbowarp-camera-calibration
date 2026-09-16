@@ -1,4 +1,3 @@
-import {featureFlags} from '../config/feature-flags.js';
 import {extensionConfig} from './config';
 import definitions from './block-definitions.json';
 import {CameraCalibrationController} from './calibration/controller.js';
@@ -12,7 +11,6 @@ import {
 
 type BlockTypeName = 'COMMAND' | 'REPORTER' | 'BOOLEAN';
 type ArgumentTypeName = 'STRING' | 'NUMBER';
-type BlockFeature = 'always' | 'cameraCalibrationV1';
 
 interface DefinitionArgument {
   type: ArgumentTypeName;
@@ -21,7 +19,6 @@ interface DefinitionArgument {
 
 interface BlockDefinition {
   opcode: string;
-  feature: BlockFeature;
   blockType: BlockTypeName;
   text: string;
   description: string;
@@ -31,7 +28,6 @@ interface BlockDefinition {
 export interface CameraCalibrationExtensionOptions {
   runtime?: TurboWarpRuntime;
   backend?: CalibrationBackendFactory;
-  enabled?: boolean;
   nowMilliseconds?: () => number;
 }
 
@@ -49,22 +45,17 @@ function normalizeId(value: unknown, fallback = defaultCameraId): string {
 export class CameraCalibrationExtension implements TurboWarpExtension {
   private readonly controller: CameraCalibrationController;
   private readonly runtime: TurboWarpRuntime;
-  private readonly enabled: boolean;
   private capability: CameraCalibrationCapabilityV1 | undefined;
 
   public constructor(options: CameraCalibrationExtensionOptions = {}) {
     this.runtime = options.runtime ?? Scratch.vm.runtime;
-    this.enabled = options.enabled ?? featureFlags.cameraCalibrationV1;
     const nowMilliseconds = options.nowMilliseconds;
     this.controller = new CameraCalibrationController({
       runtime: this.runtime,
       backend: options.backend ?? openCvBackendFactory,
       ...(nowMilliseconds ? {nowMilliseconds} : {})
     });
-    // Withheld while the feature is off. A caller that could start a session
-    // the extension will refuse to run has been told the wrong thing, and the
-    // refusal would arrive after the operator is already holding the board.
-    if (this.enabled) this.runtime[runtimeCapabilityKey] = this.createCapability();
+    this.runtime[runtimeCapabilityKey] = this.createCapability();
     this.runtime.on?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
     this.runtime.on?.('PROJECT_LOADED', this.handleProjectBoundary);
     this.runtime.on?.('RUNTIME_DISPOSED', this.handleDisposed);
@@ -76,9 +67,7 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
       name: Scratch.translate(definitions.extensionName),
       docsURI: extensionConfig.docsURI,
       blockIconURI: extensionConfig.blockIconURI,
-      blocks: blockDefinitions
-        .filter((block) => this.blockEnabled(block.feature))
-        .map((block) => this.toScratchBlock(block))
+      blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
     };
   }
 
@@ -90,7 +79,6 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     SQUARE_METERS: unknown;
     MAX_ERROR_PX: unknown;
   }): Promise<void> {
-    this.requireEnabled();
     await this.controller.start({
       cameraId: normalizeId(args.CAMERA_ID),
       calibrationId: Scratch.Cast.toString(args.CALIBRATION_ID).trim(),
@@ -104,12 +92,10 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   }
 
   public async addCameraCalibrationSample(args: {CAMERA_ID: unknown}): Promise<void> {
-    this.requireEnabled();
     await this.controller.addSample(normalizeId(args.CAMERA_ID));
   }
 
   public async solveCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
-    this.requireEnabled();
     await this.controller.solve(normalizeId(args.CAMERA_ID));
   }
 
@@ -122,7 +108,6 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   }
 
   public async publishCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
-    this.requireEnabled();
     await this.controller.publishProfile(normalizeId(args.CAMERA_ID));
   }
 
@@ -130,7 +115,6 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     JSON: unknown;
     CAMERA_ID: unknown;
   }): Promise<void> {
-    this.requireEnabled();
     await this.controller.importProfile(
       normalizeId(args.CAMERA_ID),
       Scratch.Cast.toString(args.JSON)
@@ -138,7 +122,6 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   }
 
   public cameraCalibrationJsonValid(args: {JSON: unknown; CAMERA_ID: unknown}): boolean {
-    if (!this.enabled) return false;
     return this.controller.validateProfile(
       normalizeId(args.CAMERA_ID),
       Scratch.Cast.toString(args.JSON)
@@ -146,42 +129,39 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   }
 
   public cameraCalibrationReady(args: {CAMERA_ID: unknown}): boolean {
-    return this.enabled && this.controller.ready(normalizeId(args.CAMERA_ID));
+    return this.controller.ready(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationState(args: {CAMERA_ID?: unknown} = {}): string {
-    if (!this.enabled) return IDLE_CALIBRATION_STATE;
     return this.controller.state(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationBackend(): string {
-    return this.enabled ? this.controller.backend() : '';
+    return this.controller.backend();
   }
 
   public cameraCalibrationSampleCount(args: {CAMERA_ID: unknown}): number {
-    return this.enabled ? this.controller.sampleCount(normalizeId(args.CAMERA_ID)) : 0;
+    return this.controller.sampleCount(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationSampleQuality(args: {CAMERA_ID: unknown}): number {
-    return this.enabled ? this.controller.latestSampleQuality(normalizeId(args.CAMERA_ID)) : 0;
+    return this.controller.latestSampleQuality(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationReprojectionError(args: {CAMERA_ID: unknown}): number {
-    return this.enabled
-      ? this.controller.latestReprojectionError(normalizeId(args.CAMERA_ID))
-      : 0;
+    return this.controller.latestReprojectionError(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationErrorCode(args: {CAMERA_ID: unknown}): string {
-    return this.enabled ? this.controller.errorCode(normalizeId(args.CAMERA_ID)) : '';
+    return this.controller.errorCode(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationError(args: {CAMERA_ID: unknown}): string {
-    return this.enabled ? this.controller.errorMessage(normalizeId(args.CAMERA_ID)) : '';
+    return this.controller.errorMessage(normalizeId(args.CAMERA_ID));
   }
 
   public cameraCalibrationJson(args: {CAMERA_ID: unknown}): string {
-    return this.enabled ? this.controller.profileJson(normalizeId(args.CAMERA_ID)) : '';
+    return this.controller.profileJson(normalizeId(args.CAMERA_ID));
   }
 
   /** Releases every camera lease when the project stops or is replaced. */
@@ -231,18 +211,6 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
       profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))
     });
     return this.capability;
-  }
-
-  private blockEnabled(feature: BlockFeature): boolean {
-    return feature === 'always' || this.enabled;
-  }
-
-  private requireEnabled(): void {
-    if (!this.enabled) {
-      throw new Error(
-        'Camera calibration v1 is disabled. Enable it before the project starts.'
-      );
-    }
   }
 
   private toScratchBlock(block: BlockDefinition): Record<string, unknown> {
