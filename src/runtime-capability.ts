@@ -15,12 +15,13 @@
 import type {
   BoardPoseOptions,
   CalibrationErrorCode,
+  CalibrationGuidance,
   CalibrationStartOptions,
   CalibrationState
 } from './calibration/contract.js';
 
 export const runtimeCapabilityKey = 'kubohiroyaCameraCalibrationCapability';
-export const runtimeCapabilityVersion = 1 as const;
+export const runtimeCapabilityVersion = 2 as const;
 
 export interface CameraCalibrationCapabilityV1 {
   readonly version: typeof runtimeCapabilityVersion;
@@ -36,6 +37,27 @@ export interface CameraCalibrationCapabilityV1 {
   start(options: CalibrationStartOptions): Promise<void>;
   /** Captures one board view. Rejects when the view is unusable, keeping the session. */
   addSample(cameraId: string): Promise<void>;
+  /**
+   * Hands the shutter to this extension, or takes it back. Since version 2.
+   *
+   * With it on, views are collected as the board reaches positions worth
+   * collecting, the solver is re-run in the background as the set grows, and
+   * the session ends by itself once the answer validates against views it was
+   * not fitted to. `guidance` is what to tell the operator meanwhile.
+   *
+   * Turn it on after `start`: there is nothing to watch before a session has a
+   * camera, and the request is not remembered.
+   */
+  setAutomatic(cameraId: string, enabled: boolean): void;
+  /** Whether the shutter is watching on its own. Since version 2. */
+  automatic(cameraId: string): boolean;
+  /**
+   * What the operator should do next. Since version 2.
+   *
+   * Not an error: a frame the shutter declines is the ordinary case, and
+   * recording those as errors would leave one showing for most of a session.
+   */
+  guidance(cameraId: string): CalibrationGuidance;
   /** Solves from the accepted samples and releases the camera. */
   solve(cameraId: string): Promise<void>;
   /** Hands the solved profile to Camera Source, which owns the profile contract. */
@@ -115,7 +137,13 @@ export function createRuntimeCapability(
   const capability: CameraCalibrationCapabilityV1 = {
     version: runtimeCapabilityVersion,
     requireVersion(version) {
-      if (version !== runtimeCapabilityVersion) {
+      // Older is fine; newer is not. Every change to this surface so far has
+      // added members, so a consumer written against version 1 finds
+      // everything it was written against in a version 2 object. A consumer
+      // asking for a version this build has never heard of is asking for
+      // something that may not be here, and is told so now rather than partway
+      // through a calibration the operator is already standing in front of.
+      if (!Number.isInteger(version) || version < 1 || version > runtimeCapabilityVersion) {
         throw new Error(
           `Unsupported Camera Calibration runtime capability version: ${version}; this build provides ${runtimeCapabilityVersion}.`
         );
@@ -124,6 +152,9 @@ export function createRuntimeCapability(
     },
     start: (options) => host.start(options),
     addSample: (cameraId) => host.addSample(cameraId),
+    setAutomatic: (cameraId, enabled) => host.setAutomatic(cameraId, enabled),
+    automatic: (cameraId) => host.automatic(cameraId),
+    guidance: (cameraId) => host.guidance(cameraId),
     solve: (cameraId) => host.solve(cameraId),
     publish: (cameraId) => host.publish(cameraId),
     cancel: (cameraId) => host.cancel(cameraId),

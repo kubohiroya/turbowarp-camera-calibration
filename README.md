@@ -208,6 +208,46 @@ Detects the complete board in the current shared frame and retains it when its q
 | Opcode | `addCameraCalibrationSample` |
 | `CAMERA_ID` | String, default: `default` |
 
+### `start automatic calibration capture for camera [CAMERA_ID]`
+
+Watches the shared frame and retains views as the board reaches positions worth retaining, re-solving in the background as the set grows and finishing the session once the answer reproduces views it was not fitted to. Use after starting a session; a frame that cannot be used leaves guidance rather than an error.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `startAutomaticCameraCalibration` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `stop automatic calibration capture for camera [CAMERA_ID]`
+
+Hands the shutter back. The session stays open with everything collected so far, so sampling and solving can continue by hand.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `stopAutomaticCameraCalibration` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `automatic capture running for camera [CAMERA_ID]?`
+
+Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the sample limit is reached, and when the camera goes away.
+
+| Property | Value |
+|---|---|
+| Type | Boolean |
+| Opcode | `automaticCameraCalibration` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera calibration guidance [CAMERA_ID]`
+
+Returns what the operator should do next while automatic capture runs: show-the-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationGuidance` |
+| `CAMERA_ID` | String, default: `default` |
+
 ### `solve calibration for camera [CAMERA_ID]`
 
 Solves the intrinsic matrix and distortion coefficients from at least eight accepted samples, then releases the camera lease. No external pose is produced.

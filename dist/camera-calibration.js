@@ -69,6 +69,46 @@
   			} }
   		},
   		{
+  			"opcode": "startAutomaticCameraCalibration",
+  			"blockType": "COMMAND",
+  			"text": "start automatic calibration capture for camera [CAMERA_ID]",
+  			"description": "Watches the shared frame and retains views as the board reaches positions worth retaining, re-solving in the background as the set grows and finishing the session once the answer reproduces views it was not fitted to. Use after starting a session; a frame that cannot be used leaves guidance rather than an error.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "stopAutomaticCameraCalibration",
+  			"blockType": "COMMAND",
+  			"text": "stop automatic calibration capture for camera [CAMERA_ID]",
+  			"description": "Hands the shutter back. The session stays open with everything collected so far, so sampling and solving can continue by hand.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "automaticCameraCalibration",
+  			"blockType": "BOOLEAN",
+  			"text": "automatic capture running for camera [CAMERA_ID]?",
+  			"description": "Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the sample limit is reached, and when the camera goes away.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationGuidance",
+  			"blockType": "REPORTER",
+  			"text": "camera calibration guidance [CAMERA_ID]",
+  			"description": "Returns what the operator should do next while automatic capture runs: show-the-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
   			"opcode": "solveCameraCalibration",
   			"blockType": "COMMAND",
   			"text": "solve calibration for camera [CAMERA_ID]",
@@ -761,6 +801,23 @@
   /** The document a measured pose is reported as. */
   var BOARD_POSE_SCHEMA = "twcc/board-pose";
   var MINIMUM_SAMPLES = 8;
+  /**
+  * Views the automatic shutter wants before it will call a session finished.
+  *
+  * Above MINIMUM_SAMPLES on purpose. At the minimum every view is needed for
+  * the fit, so nothing is left to validate against, and an answer the automatic
+  * path accepted on its own evidence is exactly what nobody would be checking.
+  * Twelve leaves two views out of the fit and still fits ten.
+  */
+  var AUTOMATIC_COMPLETE_SAMPLES = 12;
+  /**
+  * How often the automatic shutter looks at the camera.
+  *
+  * Detection costs about 24 ms on a worker, so this is a few per cent of one
+  * core. Faster would mostly collect views of the same position: a board being
+  * moved by hand does not reach a new angle four times a second.
+  */
+  var AUTOMATIC_INTERVAL_MS = 250;
   var MAXIMUM_SAMPLES = 40;
   var MINIMUM_SAMPLE_QUALITY = .2;
   var MINIMUM_NORMALIZED_NOVELTY = .015;
@@ -784,16 +841,23 @@
   	"credential-forbidden",
   	"calibration-not-applicable"
   ]);
+  var defaultScheduler = (callback, delayMs) => {
+  	const handle = setTimeout(callback, delayMs);
+  	return () => {
+  		clearTimeout(handle);
+  	};
+  };
   /**
   * One camera's calibration. Every shared camera gets its own instance so that
   * calibrating one camera never disturbs another camera's session or lease.
   */
   var CameraCalibration = class {
-  	constructor(cameraId, runtime, resolveBackend, nowMilliseconds) {
+  	constructor(cameraId, runtime, resolveBackend, nowMilliseconds, schedule = defaultScheduler) {
   		this.cameraId = cameraId;
   		this.runtime = runtime;
   		this.resolveBackend = resolveBackend;
   		this.nowMilliseconds = nowMilliseconds;
+  		this.schedule = schedule;
   		this.samples = [];
   		this.boardPose = "";
   		this.sessionSampleCount = 0;
@@ -805,6 +869,9 @@
   		this.calibrationErrorCode = "";
   		this.calibrationErrorMessage = "";
   		this.operation = 0;
+  		this.automatic = false;
+  		this.guidanceCode = "";
+  		this.solvedFrom = 0;
   	}
   	async start(options) {
   		let normalized;
@@ -857,6 +924,7 @@
   		};
   		this.lease = lease;
   		this.samples = [];
+  		this.solvedFrom = 0;
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
@@ -867,13 +935,119 @@
   	addSample() {
   		if (this.sampling) return this.sampling;
   		if (!this.session || !this.lease || this.calibrationState !== "ready") throw new Error(`Camera ${this.cameraId} calibration is not ready to sample.`);
-  		const sampling = this.captureSample(this.operation);
+  		return this.track(this.captureSample(this.operation));
+  	}
+  	/**
+  	* Hands the shutter to the extension, or takes it back.
+  	*
+  	* Everything the operator was judging by eye -- whether the board is in
+  	* frame, whether it is steady, whether this angle is one already collected
+  	* -- is measured here anyway, on every frame, to decide whether the button
+  	* press would have been accepted. Leaving the press to a person who is also
+  	* holding the board asks them to reproduce a judgement that has already been
+  	* made.
+  	*
+  	* Idempotent, and quietly ignored when there is no session to watch: turning
+  	* it on before the camera has started is the order a project would naturally
+  	* write, not a mistake to report.
+  	*/
+  	setAutomatic(enabled) {
+  		if (!enabled) {
+  			this.stopAutomatic();
+  			this.guide("");
+  			return;
+  		}
+  		if (this.automatic) return;
+  		if (!this.session || !this.lease) return;
+  		this.automatic = true;
+  		this.guide("keep-going");
+  		this.scheduleTick(this.operation);
+  	}
+  	/** Whether the shutter is watching on its own. */
+  	automaticEnabled() {
+  		return this.automatic;
+  	}
+  	guidance() {
+  		return this.guidanceCode;
+  	}
+  	stopAutomatic() {
+  		this.automatic = false;
+  		this.cancelTick?.();
+  		this.cancelTick = void 0;
+  	}
+  	scheduleTick(operation) {
+  		this.cancelTick = this.schedule(() => {
+  			this.cancelTick = void 0;
+  			this.tick(operation);
+  		}, AUTOMATIC_INTERVAL_MS);
+  	}
+  	/**
+  	* One look at the camera.
+  	*
+  	* Reschedules itself at the end rather than running on an interval, so a
+  	* detection that takes longer than the interval cannot queue up behind
+  	* itself on a slow machine.
+  	*/
+  	async tick(operation) {
+  		if (!this.automatic || operation !== this.operation) return;
+  		if (!this.sampling && !this.solving && this.lease && this.calibrationState === "ready") {
+  			try {
+  				await this.track(this.captureSample(operation, true));
+  			} catch {
+  				this.stopAutomatic();
+  				return;
+  			}
+  			if (this.automatic && !this.solving && this.guidanceCode === "solving") this.startAutomaticSolve(operation);
+  		}
+  		if (this.automatic && operation === this.operation) this.scheduleTick(operation);
+  	}
+  	/** Runs `sampling` while recording it, so a manual sample cannot overlap. */
+  	track(sampling) {
   		this.sampling = sampling;
   		const clear = () => {
   			if (this.sampling === sampling) this.sampling = void 0;
   		};
   		sampling.then(clear, clear);
   		return sampling;
+  	}
+  	startAutomaticSolve(operation) {
+  		if (this.samples.length === this.solvedFrom) return Promise.resolve();
+  		this.solvedFrom = this.samples.length;
+  		const solving = this.automaticSolve(operation).catch(() => {
+  			this.guide("keep-going");
+  		});
+  		this.solving = solving;
+  		const clear = () => {
+  			if (this.solving === solving) this.solving = void 0;
+  		};
+  		solving.then(clear, clear);
+  		return solving;
+  	}
+  	/**
+  	* Solves in the background and decides whether that is the answer.
+  	*
+  	* Unlike `solve`, this neither ends the session nor records a refusal: the
+  	* operator has not asked for anything, so a set that is not good enough yet
+  	* just means the shutter keeps watching. The state stays `ready` throughout,
+  	* because the camera is still running and still taking views.
+  	*/
+  	async automaticSolve(operation) {
+  		const session = this.session;
+  		const lease = this.lease;
+  		if (!session || !lease) return;
+  		const { fitted, heldOut } = splitForValidation(this.samples);
+  		const backend = await this.resolveBackend();
+  		const solution = await backend.solve(fitted, session.board, session.imageWidth, session.imageHeight);
+  		const holdoutError = await backend.validate(heldOut, session.board, solution);
+  		if (operation !== this.operation || !this.automatic) return;
+  		this.reprojectionError = solution.reprojectionErrorPx;
+  		this.holdoutError = holdoutError;
+  		this.holdoutCount = heldOut.length;
+  		if (!(this.holdoutCount > 0 && Number.isFinite(this.reprojectionError) && Number.isFinite(this.holdoutError) && this.reprojectionError <= session.maximumReprojectionErrorPx && this.holdoutError <= session.maximumReprojectionErrorPx)) {
+  			this.guide("keep-going");
+  			return;
+  		}
+  		await this.finishSolve(session, lease, solution);
   	}
   	solve() {
   		if (this.solving) return this.solving;
@@ -890,6 +1064,8 @@
   		return solving;
   	}
   	async cancel() {
+  		this.stopAutomatic();
+  		this.guide("");
   		this.operation += 1;
   		if (this.lease || this.acquiring || this.sampling || this.solving) this.calibrationState = "cancelling";
   		const pending = [
@@ -1071,12 +1247,31 @@
   	profileJson() {
   		return this.profile ? JSON.stringify(this.profile) : "";
   	}
-  	async captureSample(operation) {
+  	/**
+  	* Takes one view, or says why it did not.
+  	*
+  	* `automatic` changes what a refusal means, not what is refused. Driven by
+  	* hand, a view that cannot be used is an answer to the button that was
+  	* pressed, and throwing is how the caller hears it. Driven by the shutter,
+  	* the same view is one of the many frames between two useful positions: it
+  	* leaves guidance and nothing else, because an error recorded several times
+  	* a second is not an error anyone can read.
+  	*
+  	* The failures that end a session -- the camera going away, the frame
+  	* changing shape underneath it -- are thrown on both paths.
+  	*/
+  	async captureSample(operation, automatic = false) {
   		const session = this.session;
   		const lease = this.lease;
   		if (!session || !lease) return;
-  		if (this.samples.length >= MAXIMUM_SAMPLES) this.reject("sample-limit", `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
-  		this.calibrationState = "sampling";
+  		if (this.samples.length >= MAXIMUM_SAMPLES) {
+  			if (automatic) {
+  				this.stopAutomatic();
+  				return this.guide("limit-reached");
+  			}
+  			this.reject("sample-limit", `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
+  		}
+  		if (!automatic) this.calibrationState = "sampling";
   		let frame;
   		try {
   			frame = requireVideoFrame(lease);
@@ -1097,15 +1292,46 @@
   			this.fail("sample-failed", error);
   		}
   		if (operation !== this.operation) return;
-  		if (!sample) this.reject("board-not-found", "The complete chessboard was not found.");
-  		if (sample.corners.length !== sample.ids.length || !Number.isFinite(sample.quality) || sample.quality < MINIMUM_SAMPLE_QUALITY) this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
+  		if (!sample) {
+  			if (automatic) return this.decline("show-the-board");
+  			this.reject("board-not-found", "The board was not found.");
+  		}
+  		if (sample.corners.length !== sample.ids.length || !Number.isFinite(sample.quality) || sample.quality < MINIMUM_SAMPLE_QUALITY) {
+  			if (automatic) return this.decline("hold-steadier");
+  			this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
+  		}
   		const accepted = sample;
-  		if (this.samples.some((previous) => normalizedCornerDistance(previous, accepted, session.imageWidth, session.imageHeight) < MINIMUM_NORMALIZED_NOVELTY)) this.reject("sample-too-similar", "Move or tilt the board before capturing another sample.");
+  		if (this.samples.some((previous) => normalizedCornerDistance(previous, accepted, session.imageWidth, session.imageHeight) < MINIMUM_NORMALIZED_NOVELTY)) {
+  			if (automatic) return this.decline("move-or-tilt");
+  			this.reject("sample-too-similar", "Move or tilt the board before capturing another sample.");
+  		}
   		this.samples.push(accepted);
   		this.sessionSampleCount = this.samples.length;
   		this.sampleQuality = accepted.quality;
   		this.calibrationState = "ready";
   		this.clearError();
+  		if (automatic) this.guide(this.advice(session));
+  	}
+  	/** Records what the operator should do next, without disturbing the state. */
+  	guide(guidance) {
+  		this.guidanceCode = guidance;
+  	}
+  	/**
+  	* Notes a frame the shutter looked at and did not take.
+  	*
+  	* The automatic counterpart of `reject`, and deliberately much quieter: the
+  	* session is unchanged, so there is nothing to report but what would make
+  	* the next frame usable.
+  	*/
+  	decline(guidance) {
+  		if (this.lease) this.calibrationState = "ready";
+  		this.guide(guidance);
+  	}
+  	/** What the collected views still lack, once one has been accepted. */
+  	advice(session) {
+  		if (this.samples.length < AUTOMATIC_COMPLETE_SAMPLES) return "keep-going";
+  		if (poseSpread(this.samples, session.board) < .08) return "tilt-more";
+  		return "solving";
   	}
   	async solveSession(operation) {
   		const session = this.session;
@@ -1130,6 +1356,18 @@
   			this.calibrationState = "ready";
   			this.reject("reprojection-too-high", `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`);
   		}
+  		await this.finishSolve(session, lease, solution);
+  	}
+  	/**
+  	* Adopts a solution as the answer and gives the camera back.
+  	*
+  	* Shared by the two ways a session can end: the operator asking for a solve,
+  	* and the shutter deciding on its own that the collection is good enough.
+  	* Both have to leave exactly the same thing behind -- a validated profile
+  	* and a released lease -- or a session's outcome would depend on who ended
+  	* it.
+  	*/
+  	async finishSolve(session, lease, solution) {
   		const sampleCount = this.samples.length;
   		let profile;
   		try {
@@ -1154,6 +1392,7 @@
   		} catch (error) {
   			this.fail("invalid-calibration", error);
   		}
+  		this.stopAutomatic();
   		this.profile = profile;
   		this.sessionSampleCount = sampleCount;
   		this.samples = [];
@@ -1161,6 +1400,7 @@
   		this.session = void 0;
   		this.calibrationState = "solved";
   		this.clearError();
+  		this.guide("complete");
   		await lease.release();
   	}
   	/** Drops the session and releases its lease without touching diagnostics. */
@@ -1215,6 +1455,7 @@
   		this.runtime = options.runtime;
   		this.backendFactory = options.backend;
   		this.nowMilliseconds = options.nowMilliseconds ?? Date.now;
+  		this.schedule = options.schedule ?? defaultScheduler;
   	}
   	start(options) {
   		return this.camera(options.cameraId).start(options);
@@ -1224,6 +1465,16 @@
   	}
   	solve(cameraId) {
   		return this.camera(cameraId).solve();
+  	}
+  	setAutomatic(cameraId, enabled) {
+  		if (enabled) this.camera(cameraId).setAutomatic(true);
+  		else this.existing(cameraId)?.setAutomatic(false);
+  	}
+  	automatic(cameraId) {
+  		return this.existing(cameraId)?.automaticEnabled() ?? false;
+  	}
+  	guidance(cameraId) {
+  		return this.existing(cameraId)?.guidance() ?? "";
   	}
   	cancel(cameraId) {
   		return this.existing(cameraId)?.cancel() ?? Promise.resolve();
@@ -1298,7 +1549,7 @@
   		const key = cameraId.trim();
   		const existing = this.cameras.get(key);
   		if (existing) return existing;
-  		const created = new CameraCalibration(key, this.runtime, () => this.resolveBackend(), this.nowMilliseconds);
+  		const created = new CameraCalibration(key, this.runtime, () => this.resolveBackend(), this.nowMilliseconds, this.schedule);
   		this.cameras.set(key, created);
   		return created;
   	}
@@ -1768,13 +2019,16 @@
   var runtimeCapabilityKey = "kubohiroyaCameraCalibrationCapability";
   function createRuntimeCapability(host) {
   	const capability = {
-  		version: 1,
+  		version: 2,
   		requireVersion(version) {
-  			if (version !== 1) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 1.`);
+  			if (!Number.isInteger(version) || version < 1 || version > 2) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 2.`);
   			return capability;
   		},
   		start: (options) => host.start(options),
   		addSample: (cameraId) => host.addSample(cameraId),
+  		setAutomatic: (cameraId, enabled) => host.setAutomatic(cameraId, enabled),
+  		automatic: (cameraId) => host.automatic(cameraId),
+  		guidance: (cameraId) => host.guidance(cameraId),
   		solve: (cameraId) => host.solve(cameraId),
   		publish: (cameraId) => host.publish(cameraId),
   		cancel: (cameraId) => host.cancel(cameraId),
@@ -1864,6 +2118,18 @@
   	async addCameraCalibrationSample(args) {
   		await this.controller.addSample(normalizeId(args.CAMERA_ID));
   	}
+  	startAutomaticCameraCalibration(args) {
+  		this.controller.setAutomatic(normalizeId(args.CAMERA_ID), true);
+  	}
+  	stopAutomaticCameraCalibration(args) {
+  		this.controller.setAutomatic(normalizeId(args.CAMERA_ID), false);
+  	}
+  	automaticCameraCalibration(args) {
+  		return this.controller.automatic(normalizeId(args.CAMERA_ID));
+  	}
+  	cameraCalibrationGuidance(args) {
+  		return this.controller.guidance(normalizeId(args.CAMERA_ID));
+  	}
   	async solveCameraCalibration(args) {
   		await this.controller.solve(normalizeId(args.CAMERA_ID));
   	}
@@ -1947,6 +2213,9 @@
   				cameraId: normalizeId(options.cameraId)
   			}),
   			addSample: (cameraId) => this.controller.addSample(normalizeId(cameraId)),
+  			setAutomatic: (cameraId, enabled) => this.controller.setAutomatic(normalizeId(cameraId), enabled),
+  			automatic: (cameraId) => this.controller.automatic(normalizeId(cameraId)),
+  			guidance: (cameraId) => this.controller.guidance(normalizeId(cameraId)),
   			solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
   			publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
   			cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),

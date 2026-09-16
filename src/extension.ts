@@ -109,6 +109,22 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     await this.controller.addSample(normalizeId(args.CAMERA_ID));
   }
 
+  public startAutomaticCameraCalibration(args: {CAMERA_ID: unknown}): void {
+    this.controller.setAutomatic(normalizeId(args.CAMERA_ID), true);
+  }
+
+  public stopAutomaticCameraCalibration(args: {CAMERA_ID: unknown}): void {
+    this.controller.setAutomatic(normalizeId(args.CAMERA_ID), false);
+  }
+
+  public automaticCameraCalibration(args: {CAMERA_ID: unknown}): boolean {
+    return this.controller.automatic(normalizeId(args.CAMERA_ID));
+  }
+
+  public cameraCalibrationGuidance(args: {CAMERA_ID: unknown}): string {
+    return this.controller.guidance(normalizeId(args.CAMERA_ID));
+  }
+
   public async solveCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
     await this.controller.solve(normalizeId(args.CAMERA_ID));
   }
@@ -242,6 +258,10 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     this.capability = createRuntimeCapability({
       start: (options) => this.controller.start({...options, cameraId: normalizeId(options.cameraId)}),
       addSample: (cameraId) => this.controller.addSample(normalizeId(cameraId)),
+      setAutomatic: (cameraId, enabled) =>
+        this.controller.setAutomatic(normalizeId(cameraId), enabled),
+      automatic: (cameraId) => this.controller.automatic(normalizeId(cameraId)),
+      guidance: (cameraId) => this.controller.guidance(normalizeId(cameraId)),
       solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
       publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
       cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),

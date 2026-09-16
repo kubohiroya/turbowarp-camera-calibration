@@ -47,7 +47,7 @@ describe('the published runtime sub-entry', () => {
       'runtimeCapabilityVersion'
     ]);
     expect(runtimeEntry.runtimeCapabilityKey).toBe('kubohiroyaCameraCalibrationCapability');
-    expect(runtimeEntry.runtimeCapabilityVersion).toBe(1);
+    expect(runtimeEntry.runtimeCapabilityVersion).toBe(2);
   });
 
   it('agrees with the extension about its own identity', () => {

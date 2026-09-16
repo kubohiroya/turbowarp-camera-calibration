@@ -18,6 +18,7 @@
 
 export type {
   CalibrationErrorCode,
+  CalibrationGuidance,
   CalibrationStartOptions,
   CalibrationState
 } from './calibration/contract.js';

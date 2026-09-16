@@ -50,6 +50,54 @@
       }
     },
     {
+      "opcode": "startAutomaticCameraCalibration",
+      "blockType": "COMMAND",
+      "text": "start automatic calibration capture for camera [CAMERA_ID]",
+      "description": "Watches the shared frame and retains views as the board reaches positions worth retaining, re-solving in the background as the set grows and finishing the session once the answer reproduces views it was not fitted to. Use after starting a session; a frame that cannot be used leaves guidance rather than an error.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        }
+      }
+    },
+    {
+      "opcode": "stopAutomaticCameraCalibration",
+      "blockType": "COMMAND",
+      "text": "stop automatic calibration capture for camera [CAMERA_ID]",
+      "description": "Hands the shutter back. The session stays open with everything collected so far, so sampling and solving can continue by hand.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        }
+      }
+    },
+    {
+      "opcode": "automaticCameraCalibration",
+      "blockType": "BOOLEAN",
+      "text": "automatic capture running for camera [CAMERA_ID]?",
+      "description": "Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the sample limit is reached, and when the camera goes away.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        }
+      }
+    },
+    {
+      "opcode": "cameraCalibrationGuidance",
+      "blockType": "REPORTER",
+      "text": "camera calibration guidance [CAMERA_ID]",
+      "description": "Returns what the operator should do next while automatic capture runs: show-the-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        }
+      }
+    },
+    {
       "opcode": "solveCameraCalibration",
       "blockType": "COMMAND",
       "text": "solve calibration for camera [CAMERA_ID]",
