@@ -64,6 +64,28 @@ export interface CameraCalibrationCapabilityV1 {
    * alone will report an uncalibrated camera as a flawless one.
    */
   reprojectionErrorPx(cameraId: string): number;
+  /**
+   * How varied the angles of the collected samples are.
+   *
+   * Zero means every sample was taken from the same direction, and a set like
+   * that cannot be solved from: focal length and distance stay inseparable,
+   * because a small board seen close and a large one seen far away make the
+   * same image. `solve` refuses below the required spread rather than
+   * returning a calibration whose reprojection error looks fine.
+   */
+  poseSpread(cameraId: string): number;
+  /**
+   * RMS reprojection over the views the solve was not fitted to.
+   *
+   * `reprojectionErrorPx` measures how well the answer reproduces the samples
+   * that produced it, which is a statement about fit. This one is the same
+   * measure over views held back, so the two disagreeing is the signal: the set
+   * was too small, or too alike, to support the answer. Meaningless when
+   * `holdoutSampleCount` is zero.
+   */
+  holdoutErrorPx(cameraId: string): number;
+  /** How many views were held back. Zero means nothing was validated. */
+  holdoutSampleCount(cameraId: string): number;
   errorCode(cameraId: string): CalibrationErrorCode;
   /** The refusal in full, including the detail behind the code. */
   errorMessage(cameraId: string): string;
@@ -98,6 +120,9 @@ export function createRuntimeCapability(
     sampleCount: (cameraId) => host.sampleCount(cameraId),
     sampleQuality: (cameraId) => host.sampleQuality(cameraId),
     reprojectionErrorPx: (cameraId) => host.reprojectionErrorPx(cameraId),
+    poseSpread: (cameraId) => host.poseSpread(cameraId),
+    holdoutErrorPx: (cameraId) => host.holdoutErrorPx(cameraId),
+    holdoutSampleCount: (cameraId) => host.holdoutSampleCount(cameraId),
     errorCode: (cameraId) => host.errorCode(cameraId),
     errorMessage: (cameraId) => host.errorMessage(cameraId),
     profileJson: (cameraId) => host.profileJson(cameraId)

@@ -34,7 +34,8 @@ function setup(options: Partial<CameraCalibrationExtensionOptions> = {}) {
     captureSample: vi.fn(async (): Promise<CalibrationSample | undefined> => undefined),
     solve: vi.fn(async () => {
       throw new Error('not used');
-    })
+    }),
+    validate: vi.fn(async () => 0)
   };
   const runtime: TurboWarpRuntime = {
     ext_kubohiroyacamerasource: {acquireCamera: vi.fn(async () => lease)},
@@ -146,6 +147,7 @@ describe('CameraCalibrationExtension driving a calibration', () => {
       COLUMNS: 9,
       ROWS: 6,
       SQUARE_METERS: 0.025,
+      MARKER_METERS: 0.018,
       MAX_ERROR_PX: 1.5
     });
     expect(extension.cameraCalibrationState({CAMERA_ID: 'left'})).toBe('ready');
@@ -163,6 +165,7 @@ describe('CameraCalibrationExtension driving a calibration', () => {
       COLUMNS: 9,
       ROWS: 6,
       SQUARE_METERS: 0.025,
+      MARKER_METERS: 0.018,
       MAX_ERROR_PX: 1.5
     });
     await emit('PROJECT_LOADED');
@@ -179,6 +182,7 @@ describe('CameraCalibrationExtension driving a calibration', () => {
         COLUMNS: 9,
         ROWS: 6,
         SQUARE_METERS: 0.025,
+        MARKER_METERS: 0.018,
         MAX_ERROR_PX: 1.5
       })
     ).rejects.toThrow(/dependency-missing/u);
@@ -216,7 +220,7 @@ describe('the runtime capability', () => {
     await capability?.start({
       cameraId: 'default',
       calibrationId: 'calibration-1',
-      board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+      board: {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018},
       maximumReprojectionErrorPx: 1.5
     });
     // One camera, not two views of one camera that disagree.
@@ -233,7 +237,7 @@ describe('the runtime capability', () => {
     await capability?.start({
       cameraId: '  ',
       calibrationId: 'calibration-1',
-      board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+      board: {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018},
       maximumReprojectionErrorPx: 1.5
     });
     expect(extension.cameraCalibrationState({CAMERA_ID: 'default'})).toBe('ready');
@@ -251,7 +255,7 @@ describe('the runtime capability', () => {
       capability?.start({
         cameraId: 'default',
         calibrationId: 'calibration-1',
-        board: {columns: 2, rows: 6, squareSizeMeters: 0.025},
+        board: {columns: 2, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018},
         maximumReprojectionErrorPx: 1.5
       })
     ).rejects.toThrow(/invalid-board/u);

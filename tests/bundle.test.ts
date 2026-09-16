@@ -17,7 +17,15 @@ describe('the committed extension bundle', () => {
     const bundle = await readFile(bundleUrl, 'utf8');
     const {size} = await stat(bundleUrl);
     // The solver is the reason this extension is separate from Camera Source.
-    expect(bundle).toContain('findChessboardCorners');
+    //
+    // This only says the bundle calls the name. It cannot say the OpenCV build
+    // provides it -- embind registers those at run time, so they appear in
+    // neither the bundle text nor opencv.js's text. An earlier version of this
+    // line asserted `findChessboardCorners`, and passed for five releases while
+    // that function was absent from the pinned build and no sample could be
+    // taken at all. What proves the other half is a browser.
+    expect(bundle).toContain('detectBoard');
+    expect(bundle).toContain('calibrateCameraExtended');
     expect(size).toBeGreaterThan(5_000_000);
     // OpenCV lives behind a lazy CommonJS factory. Exactly one call site, and
     // it is the dynamic import inside the backend, so loading the extension or

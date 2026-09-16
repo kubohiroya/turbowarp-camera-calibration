@@ -38,6 +38,26 @@
       ]
     },
     {
+      "opcode": "cameraCalibrationHoldoutErrorPx",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationHoldoutSampleCount",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cameraCalibrationJson",
       "blockType": "REPORTER",
       "arguments": [
@@ -57,6 +77,16 @@
         },
         {
           "id": "JSON",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "cameraCalibrationPoseSpread",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
           "type": "STRING"
         }
       ]
@@ -179,6 +209,10 @@
         },
         {
           "id": "COLUMNS",
+          "type": "NUMBER"
+        },
+        {
+          "id": "MARKER_METERS",
           "type": "NUMBER"
         },
         {

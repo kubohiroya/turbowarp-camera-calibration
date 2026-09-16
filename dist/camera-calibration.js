@@ -48,8 +48,8 @@
   		{
   			"opcode": "startCameraCalibration",
   			"blockType": "COMMAND",
-  			"text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m max error [MAX_ERROR_PX] px",
-  			"description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is measured in inner corners, not printed squares.",
+  			"text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m max error [MAX_ERROR_PX] px",
+  			"description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is a ChArUco target: a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.",
   			"arguments": {
   				"CAMERA_ID": {
   					"type": "STRING",
@@ -70,6 +70,10 @@
   				"SQUARE_METERS": {
   					"type": "NUMBER",
   					"defaultValue": .025
+  				},
+  				"MARKER_METERS": {
+  					"type": "NUMBER",
+  					"defaultValue": .018
   				},
   				"MAX_ERROR_PX": {
   					"type": "NUMBER",
@@ -211,6 +215,36 @@
   			"blockType": "REPORTER",
   			"text": "camera [CAMERA_ID] calibration reprojection error px",
   			"description": "Returns the RMS reprojection error in pixels for the latest solve or imported profile.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationPoseSpread",
+  			"blockType": "REPORTER",
+  			"text": "camera [CAMERA_ID] calibration pose spread",
+  			"description": "Returns how varied the angles of the collected samples are. Zero means every sample was taken from the same direction, which cannot be solved from: focal length and distance stay inseparable. Solving is refused below the required spread.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationHoldoutErrorPx",
+  			"blockType": "REPORTER",
+  			"text": "camera [CAMERA_ID] calibration holdout error px",
+  			"description": "Returns the RMS reprojection error over the samples the solve was not fitted to. Compare it with the reprojection error: the two agreeing is the evidence that the calibration generalizes, and the two disagreeing says the set was too small or too alike.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationHoldoutSampleCount",
+  			"blockType": "REPORTER",
+  			"text": "camera [CAMERA_ID] calibration holdout sample count",
+  			"description": "Returns how many samples were held back from the solve. Zero means nothing was validated, so the holdout error says nothing.",
   			"arguments": { "CAMERA_ID": {
   				"type": "STRING",
   				"defaultValue": "default"
@@ -636,11 +670,93 @@
   	return value;
   }
   //#endregion
+  //#region src/calibration/pose.ts
+  var NO_TILT = Object.freeze({
+  	x: 0,
+  	y: 0
+  });
+  /**
+  * The minimum spread of tilts a solve is allowed to proceed from.
+  *
+  * A board half as wide as its distance, tilted thirty degrees, gives an edge
+  * ratio near 1.35 and so a component near 0.30. This floor is a quarter of
+  * that: enough to refuse a set collected without tilting, or tilted the same
+  * way every time, without refusing a cautious operator who varied it a little.
+  */
+  var MINIMUM_POSE_SPREAD = .08;
+  function tiltOf(sample, board) {
+  	const { columns, rows } = board;
+  	const at = /* @__PURE__ */ new Map();
+  	sample.ids.forEach((id, index) => {
+  		const corner = sample.corners[index];
+  		if (corner) at.set(id, corner);
+  	});
+  	if (at.size < 4) return NO_TILT;
+  	const acrossNear = [];
+  	const acrossFar = [];
+  	const downNear = [];
+  	const downFar = [];
+  	for (const [id, corner] of at) {
+  		const column = id % columns;
+  		const row = Math.floor(id / columns);
+  		const right = column + 1 < columns ? at.get(id + 1) : void 0;
+  		if (right) (row * 2 < rows - 1 ? acrossNear : acrossFar).push(distance(corner, right));
+  		const below = row + 1 < rows ? at.get(id + columns) : void 0;
+  		if (below) (column * 2 < columns - 1 ? downNear : downFar).push(distance(corner, below));
+  	}
+  	return {
+  		x: logRatio(mean(acrossNear), mean(acrossFar)),
+  		y: logRatio(mean(downNear), mean(downFar))
+  	};
+  }
+  /**
+  * How varied the collected tilts are: the RMS distance from their mean.
+  *
+  * One number covers both ways a set goes wrong. Every sample square on puts
+  * every tilt near the origin; every sample tilted the same way puts them all in
+  * one place. Either way they sit together, and this is near zero.
+  */
+  function poseSpread(samples, board) {
+  	if (samples.length < 2) return 0;
+  	const tilts = samples.map((sample) => tiltOf(sample, board));
+  	const mean = {
+  		x: tilts.reduce((total, tilt) => total + tilt.x, 0) / tilts.length,
+  		y: tilts.reduce((total, tilt) => total + tilt.y, 0) / tilts.length
+  	};
+  	const squared = tilts.reduce((total, tilt) => total + (tilt.x - mean.x) ** 2 + (tilt.y - mean.y) ** 2, 0) / tilts.length;
+  	return Math.sqrt(squared);
+  }
+  function mean(values) {
+  	if (values.length === 0) return 0;
+  	return values.reduce((total, value) => total + value, 0) / values.length;
+  }
+  function logRatio(first, second) {
+  	if (!(first > 0) || !(second > 0)) return 0;
+  	return Math.log(first / second);
+  }
+  function distance(from, to) {
+  	return Math.hypot(from.x - to.x, from.y - to.y);
+  }
+  //#endregion
   //#region src/calibration/controller.ts
   var MINIMUM_SAMPLES = 8;
   var MAXIMUM_SAMPLES = 40;
   var MINIMUM_SAMPLE_QUALITY = .2;
   var MINIMUM_NORMALIZED_NOVELTY = .015;
+  /**
+  * The share of samples held back from the fit, to be reprojected afterwards.
+  *
+  * A solve's own reprojection error says how well the answer reproduces the
+  * samples that produced it. With few samples for the number of parameters an
+  * overfitted answer scores well on exactly that, so some views are kept out of
+  * the fit and scored separately. The two agreeing is the evidence; the two
+  * disagreeing says the set was too small or too alike.
+  *
+  * Never at the cost of the minimum: if holding views back would leave fewer
+  * than MINIMUM_SAMPLES to fit, fewer are held back, and none at all rather than
+  * a fit that is weaker than the one the operator was promised.
+  */
+  var HOLDOUT_FRACTION = .2;
   /** Codes a profile validation can produce, and therefore can clear. */
   var PROFILE_ERROR_CODES = /* @__PURE__ */ new Set([
   	"invalid-calibration",
@@ -661,6 +777,8 @@
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
+  		this.holdoutError = 0;
+  		this.holdoutCount = 0;
   		this.calibrationState = "idle";
   		this.calibrationErrorCode = "";
   		this.calibrationErrorMessage = "";
@@ -720,6 +838,8 @@
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
+  		this.holdoutError = 0;
+  		this.holdoutCount = 0;
   		this.calibrationState = "ready";
   	}
   	addSample() {
@@ -737,6 +857,8 @@
   		if (this.solving) return this.solving;
   		if (!this.session || !this.lease || this.calibrationState !== "ready") throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
   		if (this.samples.length < MINIMUM_SAMPLES) this.reject("sample-insufficient", `At least ${MINIMUM_SAMPLES} accepted samples are required.`);
+  		const spread = poseSpread(this.samples, this.session.board);
+  		if (spread < .08) this.reject("sample-poses-degenerate", `The board was held at nearly the same angle throughout (spread ${spread.toFixed(3)}, at least ${MINIMUM_POSE_SPREAD} is required). Tilt it between samples; moving it sideways does not separate focal length from distance.`);
   		const solving = this.solveSession(this.operation);
   		this.solving = solving;
   		const clear = () => {
@@ -762,6 +884,8 @@
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
+  		this.holdoutError = 0;
+  		this.holdoutCount = 0;
   		this.calibrationState = "idle";
   		this.clearError();
   	}
@@ -835,6 +959,19 @@
   	latestReprojectionError() {
   		return this.reprojectionError;
   	}
+  	/** RMS reprojection over views the fit never saw. Zero when none were held. */
+  	latestHoldoutError() {
+  		return this.holdoutError;
+  	}
+  	/** How many views were held back. Zero means nothing was validated. */
+  	holdoutSampleCount() {
+  		return this.holdoutCount;
+  	}
+  	/** How varied the collected tilts are. Zero until a second sample lands. */
+  	poseSpread() {
+  		const session = this.session;
+  		return session ? poseSpread(this.samples, session.board) : 0;
+  	}
   	errorCode() {
   		return this.calibrationErrorCode;
   	}
@@ -871,8 +1008,7 @@
   		}
   		if (operation !== this.operation) return;
   		if (!sample) this.reject("board-not-found", "The complete chessboard was not found.");
-  		const expectedCorners = session.board.columns * session.board.rows;
-  		if (sample.corners.length !== expectedCorners || !Number.isFinite(sample.quality) || sample.quality < MINIMUM_SAMPLE_QUALITY) this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
+  		if (sample.corners.length !== sample.ids.length || !Number.isFinite(sample.quality) || sample.quality < MINIMUM_SAMPLE_QUALITY) this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
   		const accepted = sample;
   		if (this.samples.some((previous) => normalizedCornerDistance(previous, accepted, session.imageWidth, session.imageHeight) < MINIMUM_NORMALIZED_NOVELTY)) this.reject("sample-too-similar", "Move or tilt the board before capturing another sample.");
   		this.samples.push(accepted);
@@ -886,14 +1022,20 @@
   		const lease = this.lease;
   		if (!session || !lease) return;
   		this.calibrationState = "solving";
+  		const { fitted, heldOut } = splitForValidation(this.samples);
   		let solution;
+  		let holdoutError = 0;
   		try {
-  			solution = await (await this.resolveBackend()).solve([...this.samples], session.board, session.imageWidth, session.imageHeight);
+  			const backend = await this.resolveBackend();
+  			solution = await backend.solve(fitted, session.board, session.imageWidth, session.imageHeight);
+  			holdoutError = await backend.validate(heldOut, session.board, solution);
   		} catch (error) {
   			this.fail("solve-failed", error);
   		}
   		if (operation !== this.operation) return;
   		this.reprojectionError = solution.reprojectionErrorPx;
+  		this.holdoutError = holdoutError;
+  		this.holdoutCount = heldOut.length;
   		if (!Number.isFinite(this.reprojectionError) || this.reprojectionError > session.maximumReprojectionErrorPx) {
   			this.calibrationState = "ready";
   			this.reject("reprojection-too-high", `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`);
@@ -1035,6 +1177,15 @@
   	latestReprojectionError(cameraId) {
   		return this.existing(cameraId)?.latestReprojectionError() ?? 0;
   	}
+  	poseSpread(cameraId) {
+  		return this.existing(cameraId)?.poseSpread() ?? 0;
+  	}
+  	latestHoldoutError(cameraId) {
+  		return this.existing(cameraId)?.latestHoldoutError() ?? 0;
+  	}
+  	holdoutSampleCount(cameraId) {
+  		return this.existing(cameraId)?.holdoutSampleCount() ?? 0;
+  	}
   	errorCode(cameraId) {
   		return this.existing(cameraId)?.errorCode() ?? "";
   	}
@@ -1082,6 +1233,7 @@
   	const columns = integerInRange(options.board.columns, 3, 20, "columns");
   	const rows = integerInRange(options.board.rows, 3, 20, "rows");
   	if (!Number.isFinite(options.board.squareSizeMeters) || options.board.squareSizeMeters <= 0 || options.board.squareSizeMeters > 1) throw new Error("square size must be within (0, 1] meter.");
+  	if (!Number.isFinite(options.board.markerSizeMeters) || options.board.markerSizeMeters <= 0 || options.board.markerSizeMeters >= options.board.squareSizeMeters) throw new Error("marker size must be greater than zero and smaller than the square size.");
   	if (!Number.isFinite(options.maximumReprojectionErrorPx) || options.maximumReprojectionErrorPx <= 0 || options.maximumReprojectionErrorPx > 100) throw new Error("maximum reprojection error must be within (0, 100] px.");
   	return {
   		cameraId: identifier(options.cameraId, "camera ID"),
@@ -1089,7 +1241,8 @@
   		board: {
   			columns,
   			rows,
-  			squareSizeMeters: options.board.squareSizeMeters
+  			squareSizeMeters: options.board.squareSizeMeters,
+  			markerSizeMeters: options.board.markerSizeMeters
   		},
   		maximumReprojectionErrorPx: options.maximumReprojectionErrorPx
   	};
@@ -1112,6 +1265,32 @@
   function integerInRange(value, minimum, maximum, label) {
   	if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error(`${label} must be an integer from ${minimum} to ${maximum}.`);
   	return value;
+  }
+  /**
+  * Divides the samples into the ones fitted and the ones kept back.
+  *
+  * Spread evenly through the order they were captured rather than taken from
+  * the end. Samples near each other in time are the ones most likely to share a
+  * position, so a hold-out cut from the tail can be the least independent part
+  * of the set -- which would make the check read better than it should.
+  */
+  function splitForValidation(samples) {
+  	const holdOut = Math.min(Math.floor(samples.length * HOLDOUT_FRACTION), samples.length - MINIMUM_SAMPLES);
+  	if (holdOut < 1) return {
+  		fitted: [...samples],
+  		heldOut: []
+  	};
+  	const step = samples.length / holdOut;
+  	const chosen = new Set(Array.from({ length: holdOut }, (_, index) => Math.min(samples.length - 1, Math.floor(index * step + step / 2))));
+  	const fitted = [];
+  	const heldOut = [];
+  	samples.forEach((sample, index) => {
+  		(chosen.has(index) ? heldOut : fitted).push(sample);
+  	});
+  	return {
+  		fitted,
+  		heldOut
+  	};
   }
   function isPromise(value) {
   	return value !== void 0;
@@ -8501,7 +8680,15 @@
   * The single pinned production solver. The version is part of the identifier so
   * that a project can record which build produced a profile.
   */
-  var OPENCV_BACKEND_NAME = "opencv-js-wasm-4.12.0";
+  var OPENCV_BACKEND_NAME = "opencv-js-wasm-4.12.0-charuco";
+  /**
+  * The fewest corners a view has to show to be worth keeping.
+  *
+  * A ChArUco view need not show the whole board -- that is the point of the
+  * markers -- but a handful of corners constrains almost nothing and drags the
+  * solve out for no gain. Six is two markers' worth.
+  */
+  var MINIMUM_CORNERS = 6;
   var openCvPromise;
   /**
   * Detects the chessboard and solves the camera intrinsics with OpenCV.
@@ -8513,6 +8700,38 @@
   var OpenCvChessboardCalibrationBackend = class {
   	constructor() {
   		this.name = OPENCV_BACKEND_NAME;
+  		this.detectors = /* @__PURE__ */ new Map();
+  	}
+  	detectorFor(cv, board) {
+  		return this.entryFor(cv, board).detector;
+  	}
+  	entryFor(cv, board) {
+  		const key = `${board.columns}x${board.rows}:${board.squareSizeMeters}:${board.markerSizeMeters}`;
+  		const existing = this.detectors.get(key);
+  		if (existing) return existing;
+  		const dictionary = cv.getPredefinedDictionary(cv.DICT_4X4_50);
+  		const ids = new cv.Mat();
+  		const charuco = new cv.aruco_CharucoBoard(new cv.Size(board.columns + 1, board.rows + 1), board.squareSizeMeters, board.markerSizeMeters, dictionary, ids);
+  		const entry = {
+  			board: charuco,
+  			detector: new cv.aruco_CharucoDetector(charuco, new cv.aruco_CharucoParameters(), new cv.aruco_DetectorParameters(), new cv.aruco_RefineParameters(10, 3, true))
+  		};
+  		this.detectors.set(key, entry);
+  		return entry;
+  	}
+  	/** Where each inner corner sits on the board, in metres. */
+  	worldPointsFor(cv, board) {
+  		const corners = this.entryFor(cv, board).board.getChessboardCorners();
+  		const points = [];
+  		for (let index = 0; index < corners.size(); index += 1) {
+  			const point = corners.get(index);
+  			points.push([
+  				point.x,
+  				point.y,
+  				point.z ?? 0
+  			]);
+  		}
+  		return points;
   	}
   	async captureSample(frame, board) {
   		const cv = await getOpenCv();
@@ -8525,21 +8744,25 @@
   		const source = cv.imread(canvas);
   		const gray = new cv.Mat();
   		const corners = new cv.Mat();
+  		const ids = new cv.Mat();
   		const laplacian = new cv.Mat();
   		const mean = new cv.Mat();
   		const standardDeviation = new cv.Mat();
   		try {
   			cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-  			if (!cv.findChessboardCorners(gray, new cv.Size(board.columns, board.rows), corners, cv.CALIB_CB_ADAPTIVE_THRESH | cv.CALIB_CB_NORMALIZE_IMAGE)) return void 0;
-  			cv.cornerSubPix(gray, corners, new cv.Size(11, 11), new cv.Size(-1, -1), new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_MAX_ITER, 30, .01));
+  			this.detectorFor(cv, board).detectBoard(gray, corners, ids);
+  			if (ids.rows < MINIMUM_CORNERS) return void 0;
   			const points = readPointPairs(corners.data32F);
+  			const identifiers = Array.from(ids.data32S);
   			cv.Laplacian(gray, laplacian, cv.CV_64F);
   			cv.meanStdDev(laplacian, mean, standardDeviation);
   			const sharpness = standardDeviation.doubleAt(0, 0) ** 2;
   			const coverage = boardCoverage(points, frame.width, frame.height);
+  			const completeness = identifiers.length / (board.columns * board.rows);
   			return {
   				corners: points,
-  				quality: clamp01(.7 * Math.min(1, coverage / .25) + .3 * Math.min(1, sharpness / 100)),
+  				ids: identifiers,
+  				quality: clamp01(.5 * Math.min(1, coverage / .25) + .3 * Math.min(1, sharpness / 100) + .2 * completeness),
   				coverage,
   				sharpness
   			};
@@ -8547,6 +8770,7 @@
   			standardDeviation.delete();
   			mean.delete();
   			laplacian.delete();
+  			ids.delete();
   			corners.delete();
   			gray.delete();
   			source.delete();
@@ -8562,17 +8786,24 @@
   		const translationVectors = new cv.MatVector();
   		const cameraMatrix = cv.Mat.eye(3, 3, cv.CV_64F);
   		const distortionCoefficients = cv.Mat.zeros(8, 1, cv.CV_64F);
+  		const standardDeviationsIntrinsics = new cv.Mat();
+  		const standardDeviationsExtrinsics = new cv.Mat();
+  		const perViewErrors = new cv.Mat();
   		const retainedMats = [];
   		try {
-  			const worldPoints = chessboardWorldPoints(board);
+  			const worldPoints = this.worldPointsFor(cv, board);
   			for (const sample of samples) {
-  				const objectPoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC3, worldPoints);
+  				const objectPoint = cv.matFromArray(sample.ids.length, 1, cv.CV_32FC3, sample.ids.flatMap((id) => worldPoints[id] ?? [
+  					0,
+  					0,
+  					0
+  				]));
   				const imagePoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC2, sample.corners.flatMap(({ x, y }) => [x, y]));
   				retainedMats.push(objectPoint, imagePoint);
   				objectPoints.push_back(objectPoint);
   				imagePoints.push_back(imagePoint);
   			}
-  			const reprojectionErrorPx = cv.calibrateCamera(objectPoints, imagePoints, new cv.Size(imageWidth, imageHeight), cameraMatrix, distortionCoefficients, rotationVectors, translationVectors);
+  			const reprojectionErrorPx = cv.calibrateCameraExtended(objectPoints, imagePoints, new cv.Size(imageWidth, imageHeight), cameraMatrix, distortionCoefficients, rotationVectors, translationVectors, standardDeviationsIntrinsics, standardDeviationsExtrinsics, perViewErrors);
   			const coefficientCount = distortionCoefficients.rows * distortionCoefficients.cols;
   			return {
   				intrinsicMatrix: readMatrix(cameraMatrix, 9),
@@ -8582,6 +8813,9 @@
   			};
   		} finally {
   			for (const matrix of retainedMats) matrix.delete();
+  			perViewErrors.delete();
+  			standardDeviationsExtrinsics.delete();
+  			standardDeviationsIntrinsics.delete();
   			distortionCoefficients.delete();
   			cameraMatrix.delete();
   			translationVectors.delete();
@@ -8590,7 +8824,62 @@
   			objectPoints.delete();
   		}
   	}
+  	/**
+  	* Reprojects held-out views with the solved intrinsics.
+  	*
+  	* Each view's pose is solved first, from those intrinsics. That is not
+  	* circular: the pose describes where the board happened to be, which the
+  	* calibration never claimed to know, and every view of a planar target needs
+  	* one before its corners can be predicted at all. What the residual then
+  	* measures is whether the intrinsics account for corners they were not
+  	* fitted to.
+  	*/
+  	async validate(samples, board, solution) {
+  		if (samples.length === 0) return 0;
+  		const cv = await getOpenCv();
+  		const worldPoints = this.worldPointsFor(cv, board);
+  		const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
+  		const distortion = cv.matFromArray(Math.max(1, solution.distortionCoefficients.length), 1, cv.CV_64F, solution.distortionCoefficients.length > 0 ? solution.distortionCoefficients : [0]);
+  		let squared = 0;
+  		let counted = 0;
+  		const scratch = [cameraMatrix, distortion];
+  		try {
+  			for (const sample of samples) {
+  				const objectPoint = cv.matFromArray(sample.ids.length, 1, cv.CV_32FC3, sample.ids.flatMap((id) => worldPoints[id] ?? [
+  					0,
+  					0,
+  					0
+  				]));
+  				const imagePoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC2, sample.corners.flatMap(({ x, y }) => [x, y]));
+  				const rotation = new cv.Mat();
+  				const translation = new cv.Mat();
+  				const projected = new cv.Mat();
+  				scratch.push(objectPoint, imagePoint, rotation, translation, projected);
+  				if (!cv.solvePnP(objectPoint, imagePoint, cameraMatrix, distortion, rotation, translation)) continue;
+  				cv.projectPoints(objectPoint, rotation, translation, cameraMatrix, distortion, projected);
+  				const predicted = readPointPairs(projected.data32F);
+  				for (let index = 0; index < sample.corners.length; index += 1) {
+  					const observed = sample.corners[index];
+  					const expected = predicted[index];
+  					if (!observed || !expected) continue;
+  					squared += (observed.x - expected.x) ** 2 + (observed.y - expected.y) ** 2;
+  					counted += 1;
+  				}
+  			}
+  		} finally {
+  			for (const matrix of scratch) matrix.delete();
+  		}
+  		return counted > 0 ? Math.sqrt(squared / counted) : 0;
+  	}
   };
+  function readMatrix(matrix, expected) {
+  	const values = Array.from(matrix.data64F.slice(0, expected));
+  	if (values.length !== expected || values.some((value) => !Number.isFinite(value))) throw new Error(`OpenCV returned an invalid ${expected}-element matrix.`);
+  	return values;
+  }
+  function clamp01(value) {
+  	return Math.min(1, Math.max(0, value));
+  }
   /**
   * Names the solver without constructing it, so that reading the backend
   * reporter — or loading the extension at all — never initializes the OpenCV
@@ -8632,19 +8921,6 @@
   	const ys = points.map(({ y }) => y);
   	return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)) / (width * height);
   }
-  function chessboardWorldPoints(board) {
-  	const points = [];
-  	for (let row = 0; row < board.rows; row += 1) for (let column = 0; column < board.columns; column += 1) points.push(column * board.squareSizeMeters, row * board.squareSizeMeters, 0);
-  	return points;
-  }
-  function readMatrix(matrix, expected) {
-  	const values = Array.from(matrix.data64F.slice(0, expected));
-  	if (values.length !== expected || values.some((value) => !Number.isFinite(value))) throw new Error(`OpenCV returned an invalid ${expected}-element matrix.`);
-  	return values;
-  }
-  function clamp01(value) {
-  	return Math.min(1, Math.max(0, value));
-  }
   //#endregion
   //#region src/runtime-capability.ts
   var runtimeCapabilityKey = "kubohiroyaCameraCalibrationCapability";
@@ -8669,6 +8945,9 @@
   		sampleCount: (cameraId) => host.sampleCount(cameraId),
   		sampleQuality: (cameraId) => host.sampleQuality(cameraId),
   		reprojectionErrorPx: (cameraId) => host.reprojectionErrorPx(cameraId),
+  		poseSpread: (cameraId) => host.poseSpread(cameraId),
+  		holdoutErrorPx: (cameraId) => host.holdoutErrorPx(cameraId),
+  		holdoutSampleCount: (cameraId) => host.holdoutSampleCount(cameraId),
   		errorCode: (cameraId) => host.errorCode(cameraId),
   		errorMessage: (cameraId) => host.errorMessage(cameraId),
   		profileJson: (cameraId) => host.profileJson(cameraId)
@@ -8722,7 +9001,8 @@
   			board: {
   				columns: Scratch.Cast.toNumber(args.COLUMNS),
   				rows: Scratch.Cast.toNumber(args.ROWS),
-  				squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS)
+  				squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS),
+  				markerSizeMeters: Scratch.Cast.toNumber(args.MARKER_METERS)
   			},
   			maximumReprojectionErrorPx: Scratch.Cast.toNumber(args.MAX_ERROR_PX)
   		});
@@ -8766,6 +9046,15 @@
   	cameraCalibrationReprojectionError(args) {
   		return this.controller.latestReprojectionError(normalizeId(args.CAMERA_ID));
   	}
+  	cameraCalibrationPoseSpread(args) {
+  		return this.controller.poseSpread(normalizeId(args.CAMERA_ID));
+  	}
+  	cameraCalibrationHoldoutErrorPx(args) {
+  		return this.controller.latestHoldoutError(normalizeId(args.CAMERA_ID));
+  	}
+  	cameraCalibrationHoldoutSampleCount(args) {
+  		return this.controller.holdoutSampleCount(normalizeId(args.CAMERA_ID));
+  	}
   	cameraCalibrationErrorCode(args) {
   		return this.controller.errorCode(normalizeId(args.CAMERA_ID));
   	}
@@ -8801,6 +9090,9 @@
   			sampleCount: (cameraId) => this.controller.sampleCount(normalizeId(cameraId)),
   			sampleQuality: (cameraId) => this.controller.latestSampleQuality(normalizeId(cameraId)),
   			reprojectionErrorPx: (cameraId) => this.controller.latestReprojectionError(normalizeId(cameraId)),
+  			poseSpread: (cameraId) => this.controller.poseSpread(normalizeId(cameraId)),
+  			holdoutErrorPx: (cameraId) => this.controller.latestHoldoutError(normalizeId(cameraId)),
+  			holdoutSampleCount: (cameraId) => this.controller.holdoutSampleCount(normalizeId(cameraId)),
   			errorCode: (cameraId) => this.controller.errorCode(normalizeId(cameraId)),
   			errorMessage: (cameraId) => this.controller.errorMessage(normalizeId(cameraId)),
   			profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))
