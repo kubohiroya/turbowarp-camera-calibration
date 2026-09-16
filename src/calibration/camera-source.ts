@@ -1,8 +1,12 @@
 import {
-  cameraSourceCapabilityKey,
+  cameraSourceCapabilityVersion,
+  readCameraSourceCapability,
   readCameraSourceRuntime,
   type CameraFrameSource,
-  type CameraLease
+  type CameraIntrinsicProfileV1,
+  type CameraLease,
+  type CameraSourceCapabilityV1,
+  type DistortionModel as CameraSourceDistortionModel
 } from '@kubohiroya/turbowarp-camera-source/runtime';
 import {DISTORTION_COEFFICIENT_COUNTS, type DistortionModel} from './types.js';
 import type {CameraIntrinsicsV1} from './profile.js';
@@ -15,32 +19,10 @@ export const CALIBRATION_LEASE_OWNER = 'turbowarp-camera-calibration';
 /** Recorded on every published profile, so a reader knows what solved it. */
 export const CALIBRATION_PRODUCER = 'turbowarp-camera-calibration';
 
+export type {CameraIntrinsicProfileV1};
+
 /** The version of Camera Source's runtime capability this extension speaks. */
-export const SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION = 1;
-
-/** The profile contract Camera Source validates against. */
-export const CAMERA_SOURCE_PROFILE_SCHEMA = 'twcs/camera-intrinsics';
-
-/**
- * The part of Camera Source's capability this extension uses.
- *
- * Camera Source publishes its keys and its camera-sharing declarations from
- * `@kubohiroya/turbowarp-camera-source/runtime`, and those are imported above
- * rather than restated. The profile registry is not in that sub-entry yet
- * (kubohiroya/turbowarp-camera-source#31), so the two members below are still
- * written out here -- narrowly, and checked against the loaded extension at
- * call time rather than assumed.
- */
-export interface CalibrationProfileRegistryPort {
-  readonly version: number;
-  requireVersion(version: number): unknown;
-  registerProfile(document: unknown): ProfileRegistrationResult;
-}
-
-/** What `registerProfile` answers. A refusal carries why, not just that. */
-export type ProfileRegistrationResult =
-  | {readonly ok: true; readonly profile?: unknown}
-  | {readonly ok: false; readonly error?: {readonly code?: string; readonly path?: string; readonly message?: string}};
+export const SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION = cameraSourceCapabilityVersion;
 
 export type CameraSourceErrorCode = 'dependency-missing' | 'api-version-mismatch';
 
@@ -79,30 +61,29 @@ export function requireCameraSource(runtime: TurboWarpRuntime): {
  */
 export function requireProfileRegistry(
   runtime: TurboWarpRuntime
-): CalibrationProfileRegistryPort {
+): CameraSourceCapabilityV1 {
   if (!readCameraSourceRuntime(runtime)) {
     throw new CameraSourceError(
       'dependency-missing',
       'TurboWarp Camera Source is not loaded, so no calibration profile registry exists.'
     );
   }
-  const candidate = runtime[cameraSourceCapabilityKey];
-  if (!hasFunction(candidate, 'registerProfile') || !hasFunction(candidate, 'requireVersion')) {
+  const capability = readCameraSourceCapability(runtime);
+  if (!capability) {
     throw new CameraSourceError(
       'api-version-mismatch',
       `The loaded Camera Source publishes no calibration profile registry. Version ${SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION} of its runtime capability is required.`
     );
   }
-  const registry = candidate as CalibrationProfileRegistryPort;
   try {
-    registry.requireVersion(SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION);
+    capability.requireVersion(SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION);
   } catch (error) {
     throw new CameraSourceError(
       'api-version-mismatch',
       error instanceof Error ? error.message : String(error)
     );
   }
-  return registry;
+  return capability;
 }
 
 /**
@@ -121,7 +102,7 @@ export function requireProfileRegistry(
  * one, which would leave a consumer applying the wrong coefficients to real
  * pixels and getting a plausible wrong answer.
  */
-export function toCameraSourceProfile(profile: CameraIntrinsicsV1): Record<string, unknown> {
+export function toCameraSourceProfile(profile: CameraIntrinsicsV1): CameraIntrinsicProfileV1 {
   const [fx, skew, cx, , fy, cy] = profile.intrinsicMatrix as [
     number,
     number,
@@ -130,9 +111,8 @@ export function toCameraSourceProfile(profile: CameraIntrinsicsV1): Record<strin
     number,
     number
   ];
-  const document: Record<string, unknown> = {
-    schema: CAMERA_SOURCE_PROFILE_SCHEMA,
-    version: 1,
+  const document = {
+    schema: 'twcs/camera-intrinsics',
     profileId: profile.calibrationId,
     cameraId: profile.cameraId,
     calibratedAt: profile.calibratedAt,
@@ -148,9 +128,10 @@ export function toCameraSourceProfile(profile: CameraIntrinsicsV1): Record<strin
       model: cameraSourceDistortionModel(profile.distortionModel),
       coefficients: [...profile.distortionCoefficients]
     }
-  };
-  if (profile.quality) document.quality = {...profile.quality};
-  return document;
+  } as const satisfies Omit<CameraIntrinsicProfileV1, 'version' | 'quality'>;
+  return profile.quality
+    ? {...document, version: 1, quality: {...profile.quality}}
+    : {...document, version: 1};
 }
 
 /**
@@ -162,7 +143,9 @@ export function toCameraSourceProfile(profile: CameraIntrinsicsV1): Record<strin
  * profile using one cannot be published rather than being sent under a name
  * that would make a consumer read its coefficients as something else.
  */
-export function cameraSourceDistortionModel(model: DistortionModel): string {
+export function cameraSourceDistortionModel(
+  model: DistortionModel
+): CameraSourceDistortionModel {
   switch (model) {
     case 'none':
       return 'none';
@@ -177,10 +160,3 @@ export function cameraSourceDistortionModel(model: DistortionModel): string {
   }
 }
 
-function hasFunction(value: unknown, name: string): boolean {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Record<string, unknown>)[name] === 'function'
-  );
-}

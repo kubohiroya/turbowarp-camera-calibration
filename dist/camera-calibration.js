@@ -270,7 +270,7 @@
   	]
   };
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.7.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.8.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
   /**
   * Where the extension instance puts itself on the VM runtime.
   *
@@ -278,7 +278,14 @@
   * consumer has to handle whatever else it does.
   */
   var cameraSourceRuntimeKey = "ext_kubohiroyacamerasource";
-  /** Where the versioned capability sits, when the build publishing it has that path enabled. */
+  /**
+  * Where the versioned capability sits, when the build publishing it has that path enabled.
+  *
+  * Separate from `cameraSourceRuntimeKey` on purpose. The extension key is present as soon as Camera
+  * Source is registered; this one appears only when the calibration profile contract is switched on.
+  * A consumer can therefore tell "not loaded" from "loaded, and not offering profiles", and neither
+  * has to be reported as the other.
+  */
   var cameraSourceCapabilityKey = "kubohiroyaCameraSourceCapability";
   /** Narrows a runtime value to the Camera Source surface, so a missing extension reads as absent. */
   function readCameraSourceRuntime(runtime) {
@@ -287,6 +294,24 @@
   	if (typeof candidate !== "object" || candidate === null) return void 0;
   	const { acquireCamera } = candidate;
   	return typeof acquireCamera === "function" ? candidate : void 0;
+  }
+  /**
+  * Narrows a runtime value to the profile capability, or reports it as unavailable.
+  *
+  * Undefined means one of two things a consumer usually handles the same way: Camera Source is not
+  * loaded, or it is loaded with the profile contract switched off. `readCameraSourceRuntime` is what
+  * separates them when the difference matters -- a consumer that can still share a camera but cannot
+  * ask about calibration should say that, rather than reporting the extension as missing.
+  *
+  * A version this build does not implement is a third thing again, and not an absence: the capability
+  * is returned, and `requireVersion` refuses out loud when asked for a version it cannot honour.
+  */
+  function readCameraSourceCapability(runtime) {
+  	if (typeof runtime !== "object" || runtime === null) return void 0;
+  	const candidate = runtime[cameraSourceCapabilityKey];
+  	if (typeof candidate !== "object" || candidate === null) return void 0;
+  	const { requireVersion } = candidate;
+  	return typeof requireVersion === "function" ? candidate : void 0;
   }
   //#endregion
   //#region src/calibration/types.ts
@@ -304,8 +329,8 @@
   var CALIBRATION_LEASE_OWNER = "turbowarp-camera-calibration";
   /** Recorded on every published profile, so a reader knows what solved it. */
   var CALIBRATION_PRODUCER = "turbowarp-camera-calibration";
-  /** The profile contract Camera Source validates against. */
-  var CAMERA_SOURCE_PROFILE_SCHEMA = "twcs/camera-intrinsics";
+  /** The version of Camera Source's runtime capability this extension speaks. */
+  var SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION = 1;
   var CameraSourceError = class extends Error {
   	constructor(code, message) {
   		super(message);
@@ -330,15 +355,14 @@
   */
   function requireProfileRegistry(runtime) {
   	if (!readCameraSourceRuntime(runtime)) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded, so no calibration profile registry exists.");
-  	const candidate = runtime[cameraSourceCapabilityKey];
-  	if (!hasFunction(candidate, "registerProfile") || !hasFunction(candidate, "requireVersion")) throw new CameraSourceError("api-version-mismatch", `The loaded Camera Source publishes no calibration profile registry. Version 1 of its runtime capability is required.`);
-  	const registry = candidate;
+  	const capability = readCameraSourceCapability(runtime);
+  	if (!capability) throw new CameraSourceError("api-version-mismatch", `The loaded Camera Source publishes no calibration profile registry. Version ${SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION} of its runtime capability is required.`);
   	try {
-  		registry.requireVersion(1);
+  		capability.requireVersion(SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION);
   	} catch (error) {
   		throw new CameraSourceError("api-version-mismatch", error instanceof Error ? error.message : String(error));
   	}
-  	return registry;
+  	return capability;
   }
   /**
   * Restates a solved profile as the document Camera Source validates.
@@ -359,8 +383,7 @@
   function toCameraSourceProfile(profile) {
   	const [fx, skew, cx, , fy, cy] = profile.intrinsicMatrix;
   	const document = {
-  		schema: CAMERA_SOURCE_PROFILE_SCHEMA,
-  		version: 1,
+  		schema: "twcs/camera-intrinsics",
   		profileId: profile.calibrationId,
   		cameraId: profile.cameraId,
   		calibratedAt: profile.calibratedAt,
@@ -383,8 +406,14 @@
   			coefficients: [...profile.distortionCoefficients]
   		}
   	};
-  	if (profile.quality) document.quality = { ...profile.quality };
-  	return document;
+  	return profile.quality ? {
+  		...document,
+  		version: 1,
+  		quality: { ...profile.quality }
+  	} : {
+  		...document,
+  		version: 1
+  	};
   }
   /**
   * Names this extension's distortion model the way Camera Source names it.
@@ -402,9 +431,6 @@
   		case "opencv-rational": return "brown-conrady";
   		default: throw new CameraSourceError("api-version-mismatch", `Camera Source has no distortion model matching ${model} (${String(DISTORTION_COEFFICIENT_COUNTS[model])} coefficients), so this profile cannot be published.`);
   	}
-  }
-  function hasFunction(value, name) {
-  	return typeof value === "object" && value !== null && typeof value[name] === "function";
   }
   //#endregion
   //#region src/calibration/profile.ts

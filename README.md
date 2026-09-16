@@ -108,7 +108,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.2.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.3.0
 ```
 
 Load the standalone bundle from:
@@ -120,7 +120,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.2.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.3.0/dist/camera-calibration.js
 ```
 
 ## Quick start
