@@ -27,7 +27,7 @@ function frameSource(overrides: Partial<CameraFrameSource> = {}) {
   } as CameraFrameSource & {width: number; height: number; deviceId: string};
 }
 
-function setup() {
+function setup(schedule?: (callback: () => void, delayMs: number) => () => void) {
   const frame = frameSource();
   const release = vi.fn(async () => undefined);
   const lease: CameraLease = {getFrameSource: vi.fn(() => frame), release};
@@ -85,7 +85,8 @@ function setup() {
   const controller = new CameraCalibrationController({
     runtime,
     backend: {name: 'mock-calibration-backend', create},
-    nowMilliseconds: () => Date.parse('2026-09-13T12:00:00Z')
+    nowMilliseconds: () => Date.parse('2026-09-13T12:00:00Z'),
+    ...(schedule ? {schedule} : {})
   });
   return {
     controller,
@@ -340,6 +341,49 @@ describe('CameraCalibrationController', () => {
     });
     await expect(ended.controller.start(startOptions)).rejects.toThrow(/camera-ended/u);
     expect(ended.release).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a camera that has not produced its first frame yet', async () => {
+    // Camera Source reports a camera as started once `play()` resolves, and
+    // for a MediaStream that can land before the metadata carrying the frame
+    // size. The very first look can therefore legitimately find a zero-sized
+    // video. Failing there ends a session the operator just started, on a
+    // camera that was about to work -- and the lease goes back, so the preview
+    // goes black at the same moment.
+    const context = setup();
+    let looks = 0;
+    context.lease.getFrameSource = vi.fn(() => {
+      looks += 1;
+      return looks < 3
+        ? (frameSource({width: 0, height: 0}) as ReturnType<typeof frameSource>)
+        : context.frame;
+    });
+    await context.controller.start(startOptions);
+    expect(looks).toBeGreaterThanOrEqual(3);
+    expect(context.controller.state('camera-1')).toBe('ready');
+    expect(context.controller.errorCode('camera-1')).toBe('');
+    // The size the session is fixed to must be the one the camera really has,
+    // not the one it reported before it had any.
+    await context.controller.addSample('camera-1');
+    expect(context.controller.sampleCount('camera-1')).toBe(1);
+    expect(context.release).not.toHaveBeenCalled();
+  });
+
+  it('gives up on a camera that never produces a frame, and hands it back', async () => {
+    // The wait is bounded by looks as well as by the clock, so a harness whose
+    // clock does not move still reaches the end of it. Runs here without real
+    // delays for the same reason the shutter's tests do.
+    const context = setup((callback) => {
+      const handle = setTimeout(callback, 0);
+      return () => {
+        clearTimeout(handle);
+      };
+    });
+    context.lease.getFrameSource = vi.fn(
+      () => frameSource({width: 0, height: 0}) as ReturnType<typeof frameSource>
+    );
+    await expect(context.controller.start(startOptions)).rejects.toThrow(/camera-ended/u);
+    expect(context.release).toHaveBeenCalledOnce();
   });
 
   it('keeps a running session when the board arguments are invalid', async () => {
