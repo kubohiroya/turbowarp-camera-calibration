@@ -106,7 +106,7 @@ bundleは約11 MBあります。
 検証済みのversionをexact pinします。
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.1.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.2.0
 ```
 
 standalone bundle:
@@ -118,7 +118,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 version固定CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.1.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.2.0/dist/camera-calibration.js
 ```
 
 ## クイックスタート
@@ -226,6 +226,48 @@ block referenceは
 cancelが、別のカメラのleaseを解放したり、同じ共有カメラの他の利用者を止めたり
 することはありません。
 
+## ほかの機能拡張から校正を実行する
+
+ブロックはプロジェクトのためのパレットであって、機能拡張間のAPIではありません。
+校正を実行したい機能拡張 — かつて自前で持っていて、いまは委譲する側 — は、VM
+runtime上のversion付きcapabilityを使います。
+
+```ts
+import {
+  readCameraCalibrationCapability
+} from '@kubohiroya/turbowarp-camera-calibration/runtime';
+
+const calibration = readCameraCalibrationCapability(Scratch.vm.runtime);
+if (!calibration) {
+  // 未ロード、または校正機能がOFF。いずれにせよ実行できる手順は無いので、
+  // 待たずにその旨を返します。
+  return;
+}
+
+await calibration.requireVersion(1).start({
+  cameraId: 'stage-left',
+  calibrationId: 'session-1',
+  board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+  maximumReprojectionErrorPx: 1.5
+});
+```
+
+このsub-entryが持つのは宣言と定数2つだけで、機能拡張本体は一切含みません。利用側
+のbundleに増えるものは実質ありません（とくにOpenCVは入りません）。
+
+`requireVersion` は、このビルドが実装していないversionを明示的に拒否します。これは
+capabilityが無い場合とは別の答えです。機能拡張はロードされていて、要求されたことが
+できない、という状態であり、操作者への説明も変わります。
+
+capabilityが駆動するのはブロックと同じカメラ単位のセッションで、カメラの指定方法も
+同じです。空文字や空白の `cameraId` は、ブロックが `default` と呼ぶカメラを指します。
+委譲された校正とパレットから始めた校正はひとつのセッションであり、同じカメラについて
+食い違う2つの見え方にはなりません。
+
+プロファイルは別の話です。プロファイル契約を所有しているのはCamera Sourceなので、
+プロファイルの読み書き・保管・適合判定だけが目的の利用側は
+`@kubohiroya/turbowarp-camera-source` と話せばよく、この機能拡張は不要です。
+
 ## 連携
 
 | 利用側 | 関係 |
@@ -245,7 +287,9 @@ cancelが、別のカメラのleaseを解放したり、同じ共有カメラの
 | repository | `kubohiroya/turbowarp-camera-calibration` | current source |
 | npm package | `@kubohiroya/turbowarp-camera-calibration` | public package contract |
 | extension ID | `kubohiroyacameracalibration` | SB3に保存。変更にはmigrationが必要 |
-| プロファイルschema | `camerasource/camera-intrinsics` v1 | 契約とともにCamera Sourceへ移ります |
+| 保存プロファイルschema | `camerasource/camera-intrinsics` v1 | この機能拡張が読み書きします |
+| 公開プロファイルschema | `twcs/camera-intrinsics` v1 | Camera Sourceが所有します |
+| runtime capability | `kubohiroyaCameraCalibrationCapability` v1 | VM runtimeから読みます |
 | solve backend | `opencv-js-wasm-4.12.0` | 固定。ブロックで報告します |
 
 extension IDまたはopcode変更時はschema-aware migrationを説明し、保存済み識別子が

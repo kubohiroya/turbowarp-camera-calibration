@@ -6,7 +6,12 @@ import {
   type CameraCalibrationExtensionOptions
 } from '../src/extension.js';
 import type {CalibrationBackendPort, CalibrationSample} from '../src/calibration/types.js';
-import type {CameraFrameSourcePort, CameraLeasePort} from '../src/calibration/camera-source.js';
+import type {CameraFrameSource, CameraLease} from '../src/calibration/camera-source.js';
+import {
+  readCameraCalibrationCapability,
+  runtimeCapabilityKey,
+  runtimeCapabilityVersion
+} from '../src/runtime.js';
 
 const opcodesRequiringTheFeature = definitions.blocks
   .filter((block) => block.feature === 'cameraCalibrationV1')
@@ -18,16 +23,16 @@ interface Listeners {
 
 function setup(options: Partial<CameraCalibrationExtensionOptions> = {}) {
   const listeners: Listeners = {};
-  const frame: CameraFrameSourcePort = {
+  const frame: CameraFrameSource = {
     kind: 'video',
     element: {} as HTMLVideoElement,
     width: 800,
     height: 600,
-    mirrored: false,
+    previewFlip: 'none',
     deviceId: 'device-1'
   };
   const release = vi.fn(async () => undefined);
-  const lease: CameraLeasePort = {getFrameSource: () => frame, release};
+  const lease: CameraLease = {getFrameSource: () => frame, release};
   const backend: CalibrationBackendPort = {
     name: 'mock-calibration-backend',
     captureSample: vi.fn(async (): Promise<CalibrationSample | undefined> => undefined),
@@ -209,5 +214,96 @@ describe('CameraCalibrationExtension with the feature enabled', () => {
     expect(extension.cameraCalibrationErrorCode({CAMERA_ID: 'default'})).toBe(
       'dependency-missing'
     );
+  });
+});
+
+describe('the runtime capability', () => {
+  it('publishes itself under a versioned key when the feature is on', () => {
+    const {runtime} = setup({enabled: true});
+    const capability = readCameraCalibrationCapability(runtime);
+    expect(capability?.version).toBe(runtimeCapabilityVersion);
+    expect(capability?.requireVersion(runtimeCapabilityVersion)).toBe(capability);
+  });
+
+  it('refuses a version it does not implement, rather than answering anyway', () => {
+    const {runtime} = setup({enabled: true});
+    const capability = readCameraCalibrationCapability(runtime);
+    expect(() => capability?.requireVersion(2)).toThrowError(/Unsupported/u);
+  });
+
+  it('publishes nothing while the feature is off', () => {
+    // A caller that could start a session this build will refuse to run has
+    // been told the wrong thing. Absence is the honest answer.
+    const {runtime} = setup({enabled: false});
+    expect(runtime[runtimeCapabilityKey]).toBeUndefined();
+    expect(readCameraCalibrationCapability(runtime)).toBeUndefined();
+  });
+
+  it('drives the same session the blocks drive', async () => {
+    const {extension, runtime} = setup({enabled: true});
+    const capability = readCameraCalibrationCapability(runtime);
+    await capability?.start({
+      cameraId: 'default',
+      calibrationId: 'calibration-1',
+      board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+      maximumReprojectionErrorPx: 1.5
+    });
+    // One camera, not two views of one camera that disagree.
+    expect(capability?.state('default')).toBe('ready');
+    expect(extension.cameraCalibrationState({CAMERA_ID: 'default'})).toBe('ready');
+    expect(capability?.ready('default')).toBe(true);
+  });
+
+  it('addresses a camera the way the blocks address it', async () => {
+    // The blocks fall back to `default` and trim; a delegated call that did not
+    // would open a second session on a camera the operator thinks is one.
+    const {extension, runtime} = setup({enabled: true});
+    const capability = readCameraCalibrationCapability(runtime);
+    await capability?.start({
+      cameraId: '  ',
+      calibrationId: 'calibration-1',
+      board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+      maximumReprojectionErrorPx: 1.5
+    });
+    expect(extension.cameraCalibrationState({CAMERA_ID: 'default'})).toBe('ready');
+  });
+
+  it('names the solver without creating it', () => {
+    const {runtime} = setup({enabled: true});
+    expect(readCameraCalibrationCapability(runtime)?.backend()).toBe('mock-calibration-backend');
+  });
+
+  it('records a refusal where both the blocks and the caller can read it', async () => {
+    const {extension, runtime} = setup({enabled: true});
+    const capability = readCameraCalibrationCapability(runtime);
+    await expect(
+      capability?.start({
+        cameraId: 'default',
+        calibrationId: 'calibration-1',
+        board: {columns: 2, rows: 6, squareSizeMeters: 0.025},
+        maximumReprojectionErrorPx: 1.5
+      })
+    ).rejects.toThrow(/invalid-board/u);
+    expect(capability?.errorCode('default')).toBe('invalid-board');
+    expect(extension.cameraCalibrationErrorCode({CAMERA_ID: 'default'})).toBe('invalid-board');
+  });
+
+  it('goes away with the runtime it belongs to', async () => {
+    const {runtime, emit} = setup({enabled: true});
+    expect(readCameraCalibrationCapability(runtime)).toBeDefined();
+    await emit('RUNTIME_DISPOSED');
+    // A consumer outliving the VM reads an absent extension rather than
+    // driving a controller whose camera leases are already gone.
+    expect(readCameraCalibrationCapability(runtime)).toBeUndefined();
+  });
+
+  it('reports an unsolved camera as unsolved rather than as a flawless one', () => {
+    const {runtime} = setup({enabled: true});
+    const capability = readCameraCalibrationCapability(runtime);
+    expect(capability?.reprojectionErrorPx('default')).toBe(0);
+    // Zero error and no calibration read the same in the number alone, which is
+    // why the state is what a caller has to check.
+    expect(capability?.state('default')).toBe('idle');
+    expect(capability?.profileJson('default')).toBe('');
   });
 });
