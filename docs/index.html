@@ -26,10 +26,6 @@
     <li>The extension must run without the sandbox.</li>
   </ul>
 
-  <h2>Enabling calibration</h2>
-  <p>Set the override before the extension is registered. The flags are read once and frozen.</p>
-  <pre><code>globalThis.__TWCC_FEATURE_FLAGS__ = {cameraCalibrationV1: true};</code></pre>
-
   <h2>Calibrating a camera</h2>
   <pre><code>start shared camera [default]
 start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m max error [1.5] px
