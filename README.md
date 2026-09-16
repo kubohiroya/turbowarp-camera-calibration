@@ -108,7 +108,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.1.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.2.0
 ```
 
 Load the standalone bundle from:
@@ -120,7 +120,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.1.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.2.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -386,6 +386,49 @@ Each shared camera has its own session, profile, and diagnostics. Cancelling one
 camera never releases another camera's lease or stops another consumer of the
 same shared camera.
 
+## Running a calibration from another extension
+
+Blocks are a palette for a project, not an API between extensions. An extension
+that needs to run a calibration -- because it used to own one and now delegates
+it -- reaches a versioned capability on the VM runtime instead.
+
+```ts
+import {
+  readCameraCalibrationCapability
+} from '@kubohiroya/turbowarp-camera-calibration/runtime';
+
+const calibration = readCameraCalibrationCapability(Scratch.vm.runtime);
+if (!calibration) {
+  // Not loaded, or loaded with the calibration feature off. Either way there is
+  // no procedure to drive, and the caller has to say so rather than wait.
+  return;
+}
+
+await calibration.requireVersion(1).start({
+  cameraId: 'stage-left',
+  calibrationId: 'session-1',
+  board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+  maximumReprojectionErrorPx: 1.5
+});
+```
+
+The sub-entry holds declarations and two constants. It pulls in none of the
+extension, so importing it costs a consumer nothing at run time -- in
+particular, not the OpenCV build.
+
+`requireVersion` refuses a version this build does not implement, out loud. That
+is a different answer from the capability being absent: the extension is loaded
+and cannot do what was asked, which needs a different message to the operator.
+
+The capability drives the same per-camera sessions the blocks drive, and
+addresses cameras the same way: an empty or blank `cameraId` is the camera the
+blocks call `default`. A delegated calibration and one started from the palette
+are one session, not two views of one camera that disagree.
+
+Profiles are a separate matter. Camera Source owns the profile contract, so a
+consumer that only wants to read, store, or check a profile talks to
+`@kubohiroya/turbowarp-camera-source` and does not need this extension at all.
+
 ## Integration
 
 | Consumer | Relationship |
@@ -406,7 +449,9 @@ private-field access as an integration API.
 | Repository | `kubohiroya/turbowarp-camera-calibration` | Current source location |
 | npm package | `@kubohiroya/turbowarp-camera-calibration` | Public package contract |
 | Extension ID | `kubohiroyacameracalibration` | Stored in SB3; migration required to change |
-| Profile schema | `camerasource/camera-intrinsics` v1 | Moves to Camera Source with the contract |
+| Stored profile schema | `camerasource/camera-intrinsics` v1 | Read and written by this extension |
+| Published profile schema | `twcs/camera-intrinsics` v1 | Owned by Camera Source |
+| Runtime capability | `kubohiroyaCameraCalibrationCapability` v1 | Read from the VM runtime |
 | Solve backend | `opencv-js-wasm-4.12.0` | Pinned; reported by a block |
 
 Document schema-aware migrations when an extension ID or opcode changes. Never

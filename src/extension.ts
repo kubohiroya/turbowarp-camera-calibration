@@ -4,6 +4,11 @@ import definitions from './block-definitions.json';
 import {CameraCalibrationController} from './calibration/controller.js';
 import {openCvBackendFactory} from './calibration/opencv-backend.js';
 import type {CalibrationBackendFactory} from './calibration/types.js';
+import {
+  createRuntimeCapability,
+  runtimeCapabilityKey,
+  type CameraCalibrationCapabilityV1
+} from './runtime-capability.js';
 
 type BlockTypeName = 'COMMAND' | 'REPORTER' | 'BOOLEAN';
 type ArgumentTypeName = 'STRING' | 'NUMBER';
@@ -45,6 +50,7 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   private readonly controller: CameraCalibrationController;
   private readonly runtime: TurboWarpRuntime;
   private readonly enabled: boolean;
+  private capability: CameraCalibrationCapabilityV1 | undefined;
 
   public constructor(options: CameraCalibrationExtensionOptions = {}) {
     this.runtime = options.runtime ?? Scratch.vm.runtime;
@@ -55,6 +61,10 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
       backend: options.backend ?? openCvBackendFactory,
       ...(nowMilliseconds ? {nowMilliseconds} : {})
     });
+    // Withheld while the feature is off. A caller that could start a session
+    // the extension will refuse to run has been told the wrong thing, and the
+    // refusal would arrive after the operator is already holding the board.
+    if (this.enabled) this.runtime[runtimeCapabilityKey] = this.createCapability();
     this.runtime.on?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
     this.runtime.on?.('PROJECT_LOADED', this.handleProjectBoundary);
     this.runtime.on?.('RUNTIME_DISPOSED', this.handleDisposed);
@@ -180,11 +190,48 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   };
 
   private readonly handleDisposed = (): void => {
+    // Taken down with the runtime it belongs to, so a consumer that outlives
+    // the VM reads an absent extension rather than driving a dead controller.
+    if (this.runtime[runtimeCapabilityKey] === this.capability) {
+      delete this.runtime[runtimeCapabilityKey];
+    }
     this.runtime.off?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
     this.runtime.off?.('PROJECT_LOADED', this.handleProjectBoundary);
     this.runtime.off?.('RUNTIME_DISPOSED', this.handleDisposed);
     void this.controller.cleanupAll();
   };
+
+  /**
+   * The procedure, named rather than reached through opcodes.
+   *
+   * Every member routes to the same controller the blocks use, so a delegated
+   * calibration and a calibration driven from the palette are one session and
+   * not two views of one camera that disagree.
+   */
+  private createCapability(): CameraCalibrationCapabilityV1 {
+    this.capability = createRuntimeCapability({
+      start: (options) => this.controller.start({...options, cameraId: normalizeId(options.cameraId)}),
+      addSample: (cameraId) => this.controller.addSample(normalizeId(cameraId)),
+      solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
+      publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
+      cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),
+      cleanup: (cameraId) => this.controller.cleanup(normalizeId(cameraId)),
+      importProfile: (cameraId, json) => this.controller.importProfile(normalizeId(cameraId), json),
+      validateProfile: (cameraId, json) =>
+        this.controller.validateProfile(normalizeId(cameraId), json),
+      state: (cameraId) => this.controller.state(normalizeId(cameraId)),
+      ready: (cameraId) => this.controller.ready(normalizeId(cameraId)),
+      backend: () => this.controller.backend(),
+      sampleCount: (cameraId) => this.controller.sampleCount(normalizeId(cameraId)),
+      sampleQuality: (cameraId) => this.controller.latestSampleQuality(normalizeId(cameraId)),
+      reprojectionErrorPx: (cameraId) =>
+        this.controller.latestReprojectionError(normalizeId(cameraId)),
+      errorCode: (cameraId) => this.controller.errorCode(normalizeId(cameraId)),
+      errorMessage: (cameraId) => this.controller.errorMessage(normalizeId(cameraId)),
+      profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))
+    });
+    return this.capability;
+  }
 
   private blockEnabled(feature: BlockFeature): boolean {
     return feature === 'always' || this.enabled;

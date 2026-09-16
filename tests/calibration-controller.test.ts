@@ -6,7 +6,7 @@ import type {
   CalibrationSample,
   CalibrationSolveResult
 } from '../src/calibration/types.js';
-import type {CameraFrameSourcePort, CameraLeasePort} from '../src/calibration/camera-source.js';
+import type {CameraFrameSource, CameraLease} from '../src/calibration/camera-source.js';
 
 const startOptions = {
   cameraId: 'camera-1',
@@ -15,22 +15,22 @@ const startOptions = {
   maximumReprojectionErrorPx: 1.5
 };
 
-function frameSource(overrides: Partial<CameraFrameSourcePort> = {}) {
+function frameSource(overrides: Partial<CameraFrameSource> = {}) {
   return {
     kind: 'video',
     element: {} as HTMLVideoElement,
     width: 800,
     height: 600,
-    mirrored: false,
+    previewFlip: 'none',
     deviceId: 'device-1',
     ...overrides
-  } as CameraFrameSourcePort & {width: number; height: number; deviceId: string};
+  } as CameraFrameSource & {width: number; height: number; deviceId: string};
 }
 
 function setup() {
   const frame = frameSource();
   const release = vi.fn(async () => undefined);
-  const lease: CameraLeasePort = {getFrameSource: vi.fn(() => frame), release};
+  const lease: CameraLease = {getFrameSource: vi.fn(() => frame), release};
   let sampleIndex = 0;
   const captureSample = vi.fn(
     async (): Promise<CalibrationSample | undefined> => sample(sampleIndex++)
@@ -48,9 +48,26 @@ function setup() {
   };
   const create = vi.fn(async () => backend);
   const acquireCamera = vi.fn(async () => lease);
-  const registerCalibrationProfile = vi.fn(async () => undefined);
-  const cameraSource = {acquireCamera, calibrationApiVersion: 1, registerCalibrationProfile};
-  const runtime: TurboWarpRuntime = {ext_kubohiroyacamerasource: cameraSource};
+  const registerProfile = vi.fn((document: unknown) => ({ok: true as const, profile: document}));
+  // Camera Source as it really is: the camera on the extension key, the profile
+  // registry on its own versioned capability key.
+  const capability = {
+    version: 1,
+    requireVersion: vi.fn((version: number) => {
+      if (version !== capability.version) {
+        throw new Error(
+          `Unsupported Camera Source runtime capability version: ${version}; this build provides ${capability.version}.`
+        );
+      }
+      return capability;
+    }),
+    registerProfile
+  };
+  const cameraSource = {acquireCamera};
+  const runtime: TurboWarpRuntime = {
+    ext_kubohiroyacamerasource: cameraSource,
+    kubohiroyaCameraSourceCapability: capability
+  };
   const controller = new CameraCalibrationController({
     runtime,
     backend: {name: 'mock-calibration-backend', create},
@@ -64,7 +81,8 @@ function setup() {
     lease,
     release,
     acquireCamera,
-    registerCalibrationProfile,
+    capability,
+    registerProfile,
     captureSample,
     solve,
     create
@@ -323,10 +341,10 @@ describe('CameraCalibrationController', () => {
 
   it('releases a lease acquired by a start that a cancel raced', async () => {
     const {controller, acquireCamera, lease, release} = setup();
-    let finish: ((value: CameraLeasePort) => void) | undefined;
+    let finish: ((value: CameraLease) => void) | undefined;
     acquireCamera.mockImplementation(
       () =>
-        new Promise<CameraLeasePort>((resolve) => {
+        new Promise<CameraLease>((resolve) => {
           finish = resolve;
         })
     );
@@ -359,11 +377,11 @@ describe('CameraCalibrationController', () => {
   });
 
   it('keeps a solved profile when the publication is refused', async () => {
-    const {controller, cameraSource} = setup();
+    const {controller, capability} = setup();
     await controller.start(startOptions);
     await fillSamples(controller);
     await controller.solve('camera-1');
-    cameraSource.calibrationApiVersion = 2;
+    capability.version = 2;
     await expect(controller.publishProfile('camera-1')).rejects.toThrow(/api-version-mismatch/u);
     // Camera Source could not accept it, but the calibration is still solved.
     expect(controller.state('camera-1')).toBe('solved');
@@ -435,14 +453,26 @@ describe('CameraCalibrationController', () => {
   });
 
   it('publishes a solved profile through the Camera Source contract', async () => {
-    const {controller, registerCalibrationProfile} = setup();
+    const {controller, registerProfile} = setup();
     await controller.start(startOptions);
     await fillSamples(controller);
     await controller.solve('camera-1');
     await controller.publishProfile('camera-1');
-    expect(registerCalibrationProfile).toHaveBeenCalledWith(
-      JSON.parse(controller.profileJson('camera-1'))
-    );
+    // Not the stored profile: Camera Source owns the document contract and
+    // names the pinhole parameters rather than packing them into an array.
+    expect(registerProfile).toHaveBeenCalledWith({
+      schema: 'twcs/camera-intrinsics',
+      version: 1,
+      profileId: 'calibration-1',
+      cameraId: 'camera-1',
+      calibratedAt: '2026-09-13T12:00:00.000Z',
+      producer: 'turbowarp-camera-calibration',
+      cameraModel: 'pinhole',
+      image: {width: 800, height: 600, undistorted: false},
+      intrinsics: {fx: 700, fy: 700, cx: 400, cy: 300, skew: 0},
+      distortion: {model: 'brown-conrady', coefficients: [0.01, -0.02, 0, 0, 0]},
+      quality: {sampleCount: 8, reprojectionErrorPx: 0.75}
+    });
     expect(controller.errorCode('camera-1')).toBe('');
   });
 
@@ -457,7 +487,7 @@ describe('CameraCalibrationController', () => {
       'camera-1',
       await fixture('valid-camera-intrinsics-v1.json')
     );
-    mismatch.cameraSource.calibrationApiVersion = 2;
+    mismatch.capability.version = 2;
     await expect(mismatch.controller.publishProfile('camera-1')).rejects.toThrow(
       /api-version-mismatch/u
     );
@@ -468,9 +498,8 @@ describe('CameraCalibrationController', () => {
       'camera-1',
       await fixture('valid-camera-intrinsics-v1.json')
     );
-    legacyCameraSource.runtime.ext_kubohiroyacamerasource = {
-      acquireCamera: legacyCameraSource.acquireCamera
-    };
+    // Camera Source is loaded, but this build publishes no profile registry.
+    delete legacyCameraSource.runtime.kubohiroyaCameraSourceCapability;
     await expect(legacyCameraSource.controller.publishProfile('camera-1')).rejects.toThrow(
       /api-version-mismatch/u
     );

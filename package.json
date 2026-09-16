@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-camera-calibration",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A TurboWarp extension that calibrates a shared Camera Source camera and publishes its intrinsic calibration profile.",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "license": "MPL-2.0",
@@ -26,12 +26,17 @@
   "type": "module",
   "exports": {
     "./camera-calibration.js": "./dist/camera-calibration.js",
+    "./runtime": {
+      "types": "./lib/runtime.d.ts",
+      "default": "./lib/runtime.js"
+    },
     "./package.json": "./package.json"
   },
   "unpkg": "./dist/camera-calibration.js",
   "jsdelivr": "./dist/camera-calibration.js",
   "files": [
     "dist/",
+    "lib/",
     "docs/",
     "schemas/",
     "src/",
@@ -52,7 +57,7 @@
   "scripts": {
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
-    "build": "vite build",
+    "build": "vite build && tsc -p tsconfig.lib.json",
     "lint": "eslint config src tests scripts vite.config.ts",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.ts",
@@ -62,7 +67,8 @@
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "release:check": "pnpm publish --dry-run --access public --no-git-checks",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run docs:check && pnpm run check:dist && pnpm run repo:check && pnpm run pack:check",
-    "check:dist": "pnpm run build && node scripts/check-dist.ts"
+    "check:dist": "pnpm run build && node scripts/check-dist.ts",
+    "prepack": "pnpm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -75,6 +81,11 @@
     "vitest": "^5.0.0"
   },
   "dependencies": {
+    "@kubohiroya/turbowarp-camera-source": "0.7.0",
     "@techstark/opencv-js": "4.12.0-release.1"
-  }
+  },
+  "sideEffects": [
+    "src/index.ts",
+    "dist/*"
+  ]
 }

@@ -270,40 +270,23 @@
   	]
   };
   //#endregion
-  //#region src/calibration/camera-source.ts
-  /** The runtime key Camera Source publishes itself under. */
-  var CAMERA_SOURCE_RUNTIME_KEY = "ext_kubohiroyacamerasource";
-  /** The lease owner recorded with Camera Source, for diagnostics on its side. */
-  var CALIBRATION_LEASE_OWNER = "turbowarp-camera-calibration";
-  var CameraSourceError = class extends Error {
-  	constructor(code, message) {
-  		super(message);
-  		this.code = code;
-  		this.name = "CameraSourceError";
-  	}
-  };
-  /** Returns the Camera Source capability, or reports that it is not loaded. */
-  function requireCameraSource(runtime) {
-  	const candidate = runtime[CAMERA_SOURCE_RUNTIME_KEY];
-  	if (!hasFunction(candidate, "acquireCamera")) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded. Load it before calibrating; this extension never opens its own camera.");
-  	return candidate;
-  }
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.7.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
   /**
-  * Returns the profile registry when Camera Source publishes a version this
-  * extension speaks. A missing registry is an explicit mismatch, never a
-  * silently skipped publication.
+  * Where the extension instance puts itself on the VM runtime.
+  *
+  * Present as soon as the extension is registered. Absent means Camera Source is not loaded, which a
+  * consumer has to handle whatever else it does.
   */
-  function requireProfileRegistry(runtime) {
-  	const candidate = runtime[CAMERA_SOURCE_RUNTIME_KEY];
-  	if (!hasFunction(candidate, "acquireCamera")) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded, so no calibration profile registry exists.");
-  	const registry = candidate;
-  	if (!hasFunction(registry, "registerCalibrationProfile")) throw new CameraSourceError("api-version-mismatch", `The loaded Camera Source has no calibration profile registry. Version 1 of the profile contract is required.`);
-  	const version = registry.calibrationApiVersion;
-  	if (version !== 1) throw new CameraSourceError("api-version-mismatch", `Camera Source publishes calibration profile contract ${String(version)}; this extension speaks 1.`);
-  	return registry;
-  }
-  function hasFunction(value, name) {
-  	return typeof value === "object" && value !== null && typeof value[name] === "function";
+  var cameraSourceRuntimeKey = "ext_kubohiroyacamerasource";
+  /** Where the versioned capability sits, when the build publishing it has that path enabled. */
+  var cameraSourceCapabilityKey = "kubohiroyaCameraSourceCapability";
+  /** Narrows a runtime value to the Camera Source surface, so a missing extension reads as absent. */
+  function readCameraSourceRuntime(runtime) {
+  	if (typeof runtime !== "object" || runtime === null) return void 0;
+  	const candidate = runtime[cameraSourceRuntimeKey];
+  	if (typeof candidate !== "object" || candidate === null) return void 0;
+  	const { acquireCamera } = candidate;
+  	return typeof acquireCamera === "function" ? candidate : void 0;
   }
   //#endregion
   //#region src/calibration/types.ts
@@ -315,6 +298,114 @@
   	"opencv-thin-prism": [12],
   	"opencv-tilted": [14]
   });
+  //#endregion
+  //#region src/calibration/camera-source.ts
+  /** The lease owner recorded with Camera Source, for diagnostics on its side. */
+  var CALIBRATION_LEASE_OWNER = "turbowarp-camera-calibration";
+  /** Recorded on every published profile, so a reader knows what solved it. */
+  var CALIBRATION_PRODUCER = "turbowarp-camera-calibration";
+  /** The profile contract Camera Source validates against. */
+  var CAMERA_SOURCE_PROFILE_SCHEMA = "twcs/camera-intrinsics";
+  var CameraSourceError = class extends Error {
+  	constructor(code, message) {
+  		super(message);
+  		this.code = code;
+  		this.name = "CameraSourceError";
+  	}
+  };
+  /** Returns the Camera Source camera surface, or reports that it is not loaded. */
+  function requireCameraSource(runtime) {
+  	const candidate = readCameraSourceRuntime(runtime);
+  	if (!candidate) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded. Load it before calibrating; this extension never opens its own camera.");
+  	return candidate;
+  }
+  /**
+  * Returns the profile registry when Camera Source publishes a version this
+  * extension speaks.
+  *
+  * The capability key is separate from the extension key on purpose: Camera
+  * Source withholds the capability when its own calibration feature is off, so
+  * an extension that is loaded but not offering profiles is distinguishable from
+  * one that is absent, and neither is reported as the other.
+  */
+  function requireProfileRegistry(runtime) {
+  	if (!readCameraSourceRuntime(runtime)) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded, so no calibration profile registry exists.");
+  	const candidate = runtime[cameraSourceCapabilityKey];
+  	if (!hasFunction(candidate, "registerProfile") || !hasFunction(candidate, "requireVersion")) throw new CameraSourceError("api-version-mismatch", `The loaded Camera Source publishes no calibration profile registry. Version 1 of its runtime capability is required.`);
+  	const registry = candidate;
+  	try {
+  		registry.requireVersion(1);
+  	} catch (error) {
+  		throw new CameraSourceError("api-version-mismatch", error instanceof Error ? error.message : String(error));
+  	}
+  	return registry;
+  }
+  /**
+  * Restates a solved profile as the document Camera Source validates.
+  *
+  * The two shapes are not the same and never were: this extension stores a flat
+  * profile with a packed nine-number matrix, and Camera Source names the pinhole
+  * parameters individually because an array cannot say whether it is row-major.
+  * The conversion happens here, at the boundary, so that what a project has
+  * saved and what `cameraCalibrationJson` reports keep their existing shape --
+  * an SB3 holding either format still imports.
+  *
+  * Nothing is invented on the way across. The image is stated as raw or already
+  * undistorted from `imageState` rather than assumed, and a distortion model
+  * with no counterpart is refused instead of being relabelled as the nearest
+  * one, which would leave a consumer applying the wrong coefficients to real
+  * pixels and getting a plausible wrong answer.
+  */
+  function toCameraSourceProfile(profile) {
+  	const [fx, skew, cx, , fy, cy] = profile.intrinsicMatrix;
+  	const document = {
+  		schema: CAMERA_SOURCE_PROFILE_SCHEMA,
+  		version: 1,
+  		profileId: profile.calibrationId,
+  		cameraId: profile.cameraId,
+  		calibratedAt: profile.calibratedAt,
+  		producer: CALIBRATION_PRODUCER,
+  		cameraModel: profile.cameraModel,
+  		image: {
+  			width: profile.imageWidth,
+  			height: profile.imageHeight,
+  			undistorted: profile.imageState === "undistorted"
+  		},
+  		intrinsics: {
+  			fx,
+  			fy,
+  			cx,
+  			cy,
+  			skew
+  		},
+  		distortion: {
+  			model: cameraSourceDistortionModel(profile.distortionModel),
+  			coefficients: [...profile.distortionCoefficients]
+  		}
+  	};
+  	if (profile.quality) document.quality = { ...profile.quality };
+  	return document;
+  }
+  /**
+  * Names this extension's distortion model the way Camera Source names it.
+  *
+  * `opencv-plumb-bob` and `opencv-rational` are the radial-tangential family
+  * Camera Source calls `brown-conrady`, in the same coefficient order. The thin
+  * prism and tilted-sensor layouts have no counterpart in that contract, so a
+  * profile using one cannot be published rather than being sent under a name
+  * that would make a consumer read its coefficients as something else.
+  */
+  function cameraSourceDistortionModel(model) {
+  	switch (model) {
+  		case "none": return "none";
+  		case "opencv-plumb-bob":
+  		case "opencv-rational": return "brown-conrady";
+  		default: throw new CameraSourceError("api-version-mismatch", `Camera Source has no distortion model matching ${model} (${String(DISTORTION_COEFFICIENT_COUNTS[model])} coefficients), so this profile cannot be published.`);
+  	}
+  }
+  function hasFunction(value, name) {
+  	return typeof value === "object" && value !== null && typeof value[name] === "function";
+  }
   //#endregion
   //#region src/calibration/profile.ts
   /**
@@ -617,7 +708,7 @@
   			imageWidth: frame.width,
   			imageHeight: frame.height,
   			deviceId: frame.deviceId,
-  			mirrored: frame.mirrored
+  			previewFlip: frame.previewFlip
   		};
   		this.lease = lease;
   		this.samples = [];
@@ -709,11 +800,19 @@
   		} catch (error) {
   			this.refuseWith(errorCodeFor(error), error);
   		}
+  		let document;
   		try {
-  			await registry.registerCalibrationProfile(profile);
+  			document = toCameraSourceProfile(profile);
+  		} catch (error) {
+  			this.refuseWith(errorCodeFor(error), error);
+  		}
+  		let result;
+  		try {
+  			result = registry.registerProfile(document);
   		} catch (error) {
   			this.refuseWith("publish-failed", error);
   		}
+  		if (!result.ok) this.refuseWith("publish-failed", /* @__PURE__ */ new Error(`Camera Source refused the profile: ${result.error?.code ?? "unknown"} at ${result.error?.path || "/"} -- ${result.error?.message ?? "no detail reported"}`));
   		this.clearError();
   	}
   	state() {
@@ -754,7 +853,7 @@
   			this.fail("camera-ended", error);
   		}
   		if (frame.width !== session.imageWidth || frame.height !== session.imageHeight) this.reject("resolution-mismatch", `Expected ${session.imageWidth}x${session.imageHeight}, received ${frame.width}x${frame.height}.`);
-  		if (frame.deviceId !== session.deviceId || frame.mirrored !== session.mirrored) this.reject("capture-condition-mismatch", `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`);
+  		if (frame.deviceId !== session.deviceId || frame.previewFlip !== session.previewFlip) this.reject("capture-condition-mismatch", `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`);
   		let sample;
   		try {
   			sample = await (await this.resolveBackend()).captureSample({
@@ -8542,6 +8641,36 @@
   	return Math.min(1, Math.max(0, value));
   }
   //#endregion
+  //#region src/runtime-capability.ts
+  var runtimeCapabilityKey = "kubohiroyaCameraCalibrationCapability";
+  function createRuntimeCapability(host) {
+  	const capability = {
+  		version: 1,
+  		requireVersion(version) {
+  			if (version !== 1) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 1.`);
+  			return capability;
+  		},
+  		start: (options) => host.start(options),
+  		addSample: (cameraId) => host.addSample(cameraId),
+  		solve: (cameraId) => host.solve(cameraId),
+  		publish: (cameraId) => host.publish(cameraId),
+  		cancel: (cameraId) => host.cancel(cameraId),
+  		cleanup: (cameraId) => host.cleanup(cameraId),
+  		importProfile: (cameraId, json) => host.importProfile(cameraId, json),
+  		validateProfile: (cameraId, json) => host.validateProfile(cameraId, json),
+  		state: (cameraId) => host.state(cameraId),
+  		ready: (cameraId) => host.ready(cameraId),
+  		backend: () => host.backend(),
+  		sampleCount: (cameraId) => host.sampleCount(cameraId),
+  		sampleQuality: (cameraId) => host.sampleQuality(cameraId),
+  		reprojectionErrorPx: (cameraId) => host.reprojectionErrorPx(cameraId),
+  		errorCode: (cameraId) => host.errorCode(cameraId),
+  		errorMessage: (cameraId) => host.errorMessage(cameraId),
+  		profileJson: (cameraId) => host.profileJson(cameraId)
+  	};
+  	return Object.freeze(capability);
+  }
+  //#endregion
   //#region src/extension.ts
   var blockDefinitions = block_definitions_default.blocks;
   var defaultCameraId = "default";
@@ -8556,6 +8685,7 @@
   			this.controller.cancelAll();
   		};
   		this.handleDisposed = () => {
+  			if (this.runtime["kubohiroyaCameraCalibrationCapability"] === this.capability) delete this.runtime[runtimeCapabilityKey];
   			this.runtime.off?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
   			this.runtime.off?.("PROJECT_LOADED", this.handleProjectBoundary);
   			this.runtime.off?.("RUNTIME_DISPOSED", this.handleDisposed);
@@ -8569,6 +8699,7 @@
   			backend: options.backend ?? openCvBackendFactory,
   			...nowMilliseconds ? { nowMilliseconds } : {}
   		});
+  		if (this.enabled) this.runtime[runtimeCapabilityKey] = this.createCapability();
   		this.runtime.on?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
   		this.runtime.on?.("PROJECT_LOADED", this.handleProjectBoundary);
   		this.runtime.on?.("RUNTIME_DISPOSED", this.handleDisposed);
@@ -8648,6 +8779,38 @@
   	}
   	cameraCalibrationJson(args) {
   		return this.enabled ? this.controller.profileJson(normalizeId(args.CAMERA_ID)) : "";
+  	}
+  	/**
+  	* The procedure, named rather than reached through opcodes.
+  	*
+  	* Every member routes to the same controller the blocks use, so a delegated
+  	* calibration and a calibration driven from the palette are one session and
+  	* not two views of one camera that disagree.
+  	*/
+  	createCapability() {
+  		this.capability = createRuntimeCapability({
+  			start: (options) => this.controller.start({
+  				...options,
+  				cameraId: normalizeId(options.cameraId)
+  			}),
+  			addSample: (cameraId) => this.controller.addSample(normalizeId(cameraId)),
+  			solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
+  			publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
+  			cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),
+  			cleanup: (cameraId) => this.controller.cleanup(normalizeId(cameraId)),
+  			importProfile: (cameraId, json) => this.controller.importProfile(normalizeId(cameraId), json),
+  			validateProfile: (cameraId, json) => this.controller.validateProfile(normalizeId(cameraId), json),
+  			state: (cameraId) => this.controller.state(normalizeId(cameraId)),
+  			ready: (cameraId) => this.controller.ready(normalizeId(cameraId)),
+  			backend: () => this.controller.backend(),
+  			sampleCount: (cameraId) => this.controller.sampleCount(normalizeId(cameraId)),
+  			sampleQuality: (cameraId) => this.controller.latestSampleQuality(normalizeId(cameraId)),
+  			reprojectionErrorPx: (cameraId) => this.controller.latestReprojectionError(normalizeId(cameraId)),
+  			errorCode: (cameraId) => this.controller.errorCode(normalizeId(cameraId)),
+  			errorMessage: (cameraId) => this.controller.errorMessage(normalizeId(cameraId)),
+  			profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))
+  		});
+  		return this.capability;
   	}
   	blockEnabled(feature) {
   		return feature === "always" || this.enabled;

@@ -3,8 +3,9 @@ import {
   CameraSourceError,
   requireCameraSource,
   requireProfileRegistry,
-  type CameraFrameSourcePort,
-  type CameraLeasePort
+  toCameraSourceProfile,
+  type CameraFrameSource,
+  type CameraLease
 } from './camera-source.js';
 import {
   assertCameraIntrinsics,
@@ -12,6 +13,16 @@ import {
   parseCalibrationProfile,
   type CameraIntrinsicsV1
 } from './profile.js';
+export type {
+  CalibrationErrorCode,
+  CalibrationStartOptions,
+  CalibrationState
+} from './contract.js';
+import type {
+  CalibrationErrorCode,
+  CalibrationStartOptions,
+  CalibrationState
+} from './contract.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -31,46 +42,6 @@ const PROFILE_ERROR_CODES: ReadonlySet<string> = new Set([
   'calibration-not-applicable'
 ]);
 
-export type CalibrationState =
-  | 'idle'
-  | 'acquiring-camera'
-  | 'sampling'
-  | 'ready'
-  | 'solving'
-  | 'solved'
-  | 'cancelling'
-  | 'error';
-
-export type CalibrationErrorCode =
-  | ''
-  | 'dependency-missing'
-  | 'api-version-mismatch'
-  | 'invalid-board'
-  | 'camera-unavailable'
-  | 'camera-ended'
-  | 'resolution-mismatch'
-  | 'capture-condition-mismatch'
-  | 'board-not-found'
-  | 'sample-low-quality'
-  | 'sample-too-similar'
-  | 'sample-limit'
-  | 'sample-insufficient'
-  | 'sample-failed'
-  | 'solve-failed'
-  | 'reprojection-too-high'
-  | 'invalid-calibration'
-  | 'credential-forbidden'
-  | 'calibration-not-applicable'
-  | 'not-calibrated'
-  | 'publish-failed';
-
-export interface CalibrationStartOptions {
-  cameraId: string;
-  calibrationId: string;
-  board: CalibrationBoard;
-  maximumReprojectionErrorPx: number;
-}
-
 export interface CameraCalibrationControllerOptions {
   runtime: TurboWarpRuntime;
   backend: CalibrationBackendFactory;
@@ -84,7 +55,7 @@ interface CalibrationSession {
   readonly imageWidth: number;
   readonly imageHeight: number;
   readonly deviceId: string;
-  readonly mirrored: boolean;
+  readonly previewFlip: string;
 }
 
 /**
@@ -93,7 +64,7 @@ interface CalibrationSession {
  */
 class CameraCalibration {
   private session: CalibrationSession | undefined;
-  private lease: CameraLeasePort | undefined;
+  private lease: CameraLease | undefined;
   private samples: CalibrationSample[] = [];
   private acquiring: Promise<void> | undefined;
   private sampling: Promise<void> | undefined;
@@ -137,7 +108,7 @@ class CameraCalibration {
     const operation = ++this.operation;
     this.calibrationState = 'acquiring-camera';
     this.clearError();
-    let lease: CameraLeasePort;
+    let lease: CameraLease;
     try {
       lease = await requireCameraSource(this.runtime).acquireCamera({
         owner: CALIBRATION_LEASE_OWNER,
@@ -155,7 +126,7 @@ class CameraCalibration {
       await lease.release();
       return;
     }
-    let frame: CameraFrameSourcePort;
+    let frame: CameraFrameSource;
     try {
       frame = requireVideoFrame(lease);
     } catch (error) {
@@ -169,7 +140,7 @@ class CameraCalibration {
       imageWidth: frame.width,
       imageHeight: frame.height,
       deviceId: frame.deviceId,
-      mirrored: frame.mirrored
+      previewFlip: frame.previewFlip
     };
     this.lease = lease;
     this.samples = [];
@@ -298,10 +269,28 @@ class CameraCalibration {
     } catch (error) {
       this.refuseWith(errorCodeFor(error), error);
     }
+    let document: Record<string, unknown>;
     try {
-      await registry.registerCalibrationProfile(profile);
+      document = toCameraSourceProfile(profile);
+    } catch (error) {
+      this.refuseWith(errorCodeFor(error), error);
+    }
+    let result;
+    try {
+      result = registry.registerProfile(document);
     } catch (error) {
       this.refuseWith('publish-failed', error);
+    }
+    // A registry that answers rather than throws is the normal path: Camera
+    // Source validates the document and reports which member it objected to.
+    // Reading only the thrown case would record a refusal as a success.
+    if (!result.ok) {
+      this.refuseWith(
+        'publish-failed',
+        new Error(
+          `Camera Source refused the profile: ${result.error?.code ?? 'unknown'} at ${result.error?.path || '/'} -- ${result.error?.message ?? 'no detail reported'}`
+        )
+      );
     }
     this.clearError();
   }
@@ -346,7 +335,7 @@ class CameraCalibration {
       this.reject('sample-limit', `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
     }
     this.calibrationState = 'sampling';
-    let frame: CameraFrameSourcePort;
+    let frame: CameraFrameSource;
     try {
       frame = requireVideoFrame(lease);
     } catch (error) {
@@ -361,7 +350,7 @@ class CameraCalibration {
         `Expected ${session.imageWidth}x${session.imageHeight}, received ${frame.width}x${frame.height}.`
       );
     }
-    if (frame.deviceId !== session.deviceId || frame.mirrored !== session.mirrored) {
+    if (frame.deviceId !== session.deviceId || frame.previewFlip !== session.previewFlip) {
       this.reject(
         'capture-condition-mismatch',
         `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`
@@ -650,7 +639,7 @@ function errorCodeFor(error: unknown): CalibrationErrorCode {
   return 'invalid-calibration';
 }
 
-function requireVideoFrame(lease: CameraLeasePort): CameraFrameSourcePort {
+function requireVideoFrame(lease: CameraLease): CameraFrameSource {
   const frame = lease.getFrameSource();
   if (frame.kind !== 'video' || frame.width < 1 || frame.height < 1) {
     throw new Error('Camera Source has no current video frame.');

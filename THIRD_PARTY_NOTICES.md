@@ -23,6 +23,19 @@ so a dynamic `import()` is inlined into the same file instead of being split int
 The import is still lazy at run time: the WebAssembly runtime is initialized on the first sample or
 solve, and never when the extension loads or when the backend reporter is read.
 
+## Camera Source declarations
+
+The camera-sharing contract this extension talks to is imported from
+[`@kubohiroya/turbowarp-camera-source`](https://github.com/kubohiroya/turbowarp-camera-source) at the
+exact version `0.7.0`, through its `./runtime` sub-entry. That entry holds declarations and three
+string constants and no code, so nothing of Camera Source is carried into
+`dist/camera-calibration.js` beyond those constants. It is imported rather than copied because a
+copy is checked against nothing: this repository's own hand-written copy named a registry method
+Camera Source does not have, and every attempt to publish a profile failed for a reason that had
+nothing to do with what the message said.
+
+Camera Source is distributed under the Mozilla Public License 2.0.
+
 ## This extension
 
 `@kubohiroya/turbowarp-camera-calibration` itself is distributed under the Mozilla Public License
