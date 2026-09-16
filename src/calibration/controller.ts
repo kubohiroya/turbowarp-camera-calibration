@@ -15,11 +15,14 @@ import {
   type CameraIntrinsicsV1
 } from './profile.js';
 export type {
+  BoardPoseOptions,
+  BoardScaleSource,
   CalibrationErrorCode,
   CalibrationStartOptions,
   CalibrationState
 } from './contract.js';
 import type {
+  BoardPoseOptions,
   CalibrationErrorCode,
   CalibrationStartOptions,
   CalibrationState
@@ -31,6 +34,9 @@ import type {
   CalibrationBoard,
   CalibrationSample
 } from './types.js';
+
+/** The document a measured pose is reported as. */
+const BOARD_POSE_SCHEMA = 'twcc/board-pose';
 
 const MINIMUM_SAMPLES = 8;
 const MAXIMUM_SAMPLES = 40;
@@ -87,6 +93,7 @@ class CameraCalibration {
   private sampling: Promise<void> | undefined;
   private solving: Promise<void> | undefined;
   private profile: CameraIntrinsicsV1 | undefined;
+  private boardPose: string = '';
   private sessionSampleCount = 0;
   private sampleQuality = 0;
   private reprojectionError = 0;
@@ -240,6 +247,91 @@ class CameraCalibration {
   public async cleanup(): Promise<void> {
     await this.cancel();
     this.profile = undefined;
+    this.boardPose = '';
+  }
+
+  /**
+   * Measures where the board is, once it is where it is going to stay.
+   *
+   * Deliberately not part of a calibration session. A calibration needs the
+   * board to move -- a set collected without that cannot separate focal length
+   * from distance, and solving is refused -- so while one is being collected
+   * there is no single position to report. This takes its own camera lease,
+   * reads one frame, and gives it straight back.
+   */
+  public async measureBoardPose(options: BoardPoseOptions): Promise<void> {
+    const profile = this.profile;
+    if (!profile) {
+      this.refuse(
+        'not-calibrated',
+        `Camera ${this.cameraId} has no calibration profile, so nothing can say where the board is.`
+      );
+    }
+    const board = normalizeBoard(options.board);
+    let lease: CameraLease;
+    try {
+      lease = await requireCameraSource(this.runtime).acquireCamera({
+        owner: CALIBRATION_LEASE_OWNER,
+        cameraId: this.cameraId
+      });
+    } catch (error) {
+      this.refuseWith(
+        error instanceof CameraSourceError ? error.code : 'camera-unavailable',
+        error
+      );
+    }
+    try {
+      const frame = requireVideoFrame(lease);
+      const backend = await this.resolveBackend();
+      const pose = await backend.measurePose(
+        {element: frame.element, width: frame.width, height: frame.height},
+        board,
+        {
+          intrinsicMatrix: profile.intrinsicMatrix,
+          distortionModel: profile.distortionModel,
+          distortionCoefficients: profile.distortionCoefficients,
+          reprojectionErrorPx: profile.quality?.reprojectionErrorPx ?? 0
+        }
+      );
+      if (!pose) {
+        this.refuse(
+          'board-pose-unavailable',
+          'The board is not in the frame, or too little of it is.'
+        );
+      }
+      this.boardPose = JSON.stringify({
+        schema: BOARD_POSE_SCHEMA,
+        version: 1,
+        cameraId: this.cameraId,
+        intrinsicProfileId: profile.calibrationId,
+        imageWidth: frame.width,
+        imageHeight: frame.height,
+        board: {
+          columns: board.columns,
+          rows: board.rows,
+          squareSizeMeters: board.squareSizeMeters,
+          markerSizeMeters: board.markerSizeMeters
+        },
+        // Carried, not implied. See BoardScaleSource.
+        scaleSource: options.scaleSource,
+        cameraFromBoard: {
+          rotation: pose.rotation,
+          translationMeters: pose.translationMeters
+        },
+        cornerCount: pose.cornerCount,
+        reprojectionErrorPx: pose.reprojectionErrorPx,
+        observedPoints: pose.observedPoints,
+        measuredAt: new Date(this.nowMilliseconds()).toISOString()
+      });
+      this.clearError();
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /** The last measured board pose, or an empty string when none was taken. */
+  public boardPoseJson(): string {
+    return this.boardPose;
   }
 
   public async importProfile(json: string): Promise<void> {
@@ -601,6 +693,14 @@ export class CameraCalibrationController {
     return this.existing(cameraId)?.cleanup() ?? Promise.resolve();
   }
 
+  public measureBoardPose(options: BoardPoseOptions): Promise<void> {
+    return this.camera(options.cameraId).measureBoardPose(options);
+  }
+
+  public boardPoseJson(cameraId: string): string {
+    return this.existing(cameraId)?.boardPoseJson() ?? '';
+  }
+
   public importProfile(cameraId: string, json: string): Promise<void> {
     return this.camera(cameraId).importProfile(json);
   }
@@ -718,25 +818,35 @@ function requireVideoFrame(lease: CameraLease): CameraFrameSource {
   return frame;
 }
 
-function normalizeStartOptions(options: CalibrationStartOptions): CalibrationStartOptions {
-  const columns = integerInRange(options.board.columns, 3, 20, 'columns');
-  const rows = integerInRange(options.board.rows, 3, 20, 'rows');
+function normalizeBoard(board: CalibrationBoard): CalibrationBoard {
+  const columns = integerInRange(board.columns, 3, 20, 'columns');
+  const rows = integerInRange(board.rows, 3, 20, 'rows');
   if (
-    !Number.isFinite(options.board.squareSizeMeters) ||
-    options.board.squareSizeMeters <= 0 ||
-    options.board.squareSizeMeters > 1
+    !Number.isFinite(board.squareSizeMeters) ||
+    board.squareSizeMeters <= 0 ||
+    board.squareSizeMeters > 1
   ) {
     throw new Error('square size must be within (0, 1] meter.');
   }
   // The marker has to leave white around it inside its square, or the detector
   // cannot separate it from the dark squares it touches.
   if (
-    !Number.isFinite(options.board.markerSizeMeters) ||
-    options.board.markerSizeMeters <= 0 ||
-    options.board.markerSizeMeters >= options.board.squareSizeMeters
+    !Number.isFinite(board.markerSizeMeters) ||
+    board.markerSizeMeters <= 0 ||
+    board.markerSizeMeters >= board.squareSizeMeters
   ) {
     throw new Error('marker size must be greater than zero and smaller than the square size.');
   }
+  return {
+    columns,
+    rows,
+    squareSizeMeters: board.squareSizeMeters,
+    markerSizeMeters: board.markerSizeMeters
+  };
+}
+
+function normalizeStartOptions(options: CalibrationStartOptions): CalibrationStartOptions {
+  const board = normalizeBoard(options.board);
   if (
     !Number.isFinite(options.maximumReprojectionErrorPx) ||
     options.maximumReprojectionErrorPx <= 0 ||
@@ -747,12 +857,7 @@ function normalizeStartOptions(options: CalibrationStartOptions): CalibrationSta
   return {
     cameraId: identifier(options.cameraId, 'camera ID'),
     calibrationId: identifier(options.calibrationId, 'calibration ID'),
-    board: {
-      columns,
-      rows,
-      squareSizeMeters: options.board.squareSizeMeters,
-      markerSizeMeters: options.board.markerSizeMeters
-    },
+    board,
     maximumReprojectionErrorPx: options.maximumReprojectionErrorPx
   };
 }

@@ -101,6 +101,32 @@ export interface CalibrationSolveResult {
 }
 
 /**
+ * Where a board is, seen from a camera whose optics are already known.
+ *
+ * Not a product of calibration. Calibration requires the board to move --
+ * without that, focal length and distance cannot be separated, and the solver
+ * refuses the set -- so while a calibration is being collected there is no one
+ * position to report. This is measured afterwards, once the board is where it
+ * is going to stay.
+ *
+ * It is the pose of the board in the camera's frame, and nothing more. It is
+ * not a world pose: where the camera stands in a frame several cameras share is
+ * a different question, answered by whoever solves placement.
+ */
+export interface BoardPoseSolution {
+  /** Rotation from board axes to camera axes, row-major 3x3. */
+  rotation: number[];
+  /** The board origin in camera coordinates, in metres. */
+  translationMeters: number[];
+  /** Corners the pose was solved from. */
+  cornerCount: number;
+  /** How well those corners reproject through the solved pose, in pixels. */
+  reprojectionErrorPx: number;
+  /** The corners as observed, so the measurement can be re-solved elsewhere. */
+  observedPoints: Array<{id: number; u: number; v: number}>;
+}
+
+/**
  * How a solution fares on views it was not fitted to.
  *
  * `reprojectionErrorPx` from a solve measures how well the answer reproduces
@@ -144,6 +170,17 @@ export interface CalibrationBackendPort {
     board: CalibrationBoard,
     solution: CalibrationSolveResult
   ): Promise<number>;
+  /**
+   * Finds the board in one frame and solves where it is.
+   *
+   * Undefined when the board is not in the frame, which is an ordinary answer
+   * and not a failure: the operator points the camera somewhere and asks.
+   */
+  measurePose(
+    frame: CalibrationFrame,
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): Promise<BoardPoseSolution | undefined>;
 }
 
 /**

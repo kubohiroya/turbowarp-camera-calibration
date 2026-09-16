@@ -1,6 +1,7 @@
 import {extensionConfig} from './config';
 import definitions from './block-definitions.json';
 import {CameraCalibrationController} from './calibration/controller.js';
+import type {BoardScaleSource} from './calibration/contract.js';
 import {openCvBackendFactory} from './calibration/worker-backend.js';
 import type {CalibrationBackendFactory} from './calibration/types.js';
 import {
@@ -36,6 +37,17 @@ const defaultCameraId = 'default';
 
 /** The state reported for a camera that has no calibration session. */
 export const IDLE_CALIBRATION_STATE = 'idle';
+
+/**
+ * Reads the operator's word on where the scale came from.
+ *
+ * Anything that is not "measured" is nominal. Defaulting the other way would
+ * let a pose claim a provenance nobody gave it, and the whole reason the field
+ * exists is that a wrong scale does not show up in the reprojection error.
+ */
+function readScaleSource(value: unknown): BoardScaleSource {
+  return Scratch.Cast.toString(value).trim() === 'measured' ? 'measured' : 'nominal';
+}
 
 function normalizeId(value: unknown, fallback = defaultCameraId): string {
   const text = String(value ?? '').trim();
@@ -111,6 +123,30 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
 
   public async publishCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
     await this.controller.publishProfile(normalizeId(args.CAMERA_ID));
+  }
+
+  public async measureCameraBoardPose(args: {
+    CAMERA_ID: unknown;
+    COLUMNS: unknown;
+    ROWS: unknown;
+    SQUARE_METERS: unknown;
+    MARKER_METERS: unknown;
+    SCALE_SOURCE: unknown;
+  }): Promise<void> {
+    await this.controller.measureBoardPose({
+      cameraId: normalizeId(args.CAMERA_ID),
+      board: {
+        columns: Scratch.Cast.toNumber(args.COLUMNS),
+        rows: Scratch.Cast.toNumber(args.ROWS),
+        squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS),
+        markerSizeMeters: Scratch.Cast.toNumber(args.MARKER_METERS)
+      },
+      scaleSource: readScaleSource(args.SCALE_SOURCE)
+    });
+  }
+
+  public cameraBoardPoseJson(args: {CAMERA_ID: unknown}): string {
+    return this.controller.boardPoseJson(normalizeId(args.CAMERA_ID));
   }
 
   public async importCameraCalibration(args: {
@@ -227,7 +263,13 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
         this.controller.holdoutSampleCount(normalizeId(cameraId)),
       errorCode: (cameraId) => this.controller.errorCode(normalizeId(cameraId)),
       errorMessage: (cameraId) => this.controller.errorMessage(normalizeId(cameraId)),
-      profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId))
+      profileJson: (cameraId) => this.controller.profileJson(normalizeId(cameraId)),
+      measureBoardPose: (options) =>
+        this.controller.measureBoardPose({
+          ...options,
+          cameraId: normalizeId(options.cameraId)
+        }),
+      boardPoseJson: (cameraId) => this.controller.boardPoseJson(normalizeId(cameraId))
     });
     return this.capability;
   }

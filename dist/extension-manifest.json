@@ -13,6 +13,16 @@
       ]
     },
     {
+      "opcode": "cameraBoardPoseJson",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cameraCalibrationBackend",
       "blockType": "REPORTER",
       "arguments": []
@@ -172,6 +182,36 @@
         {
           "id": "JSON",
           "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "measureCameraBoardPose",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        },
+        {
+          "id": "COLUMNS",
+          "type": "NUMBER"
+        },
+        {
+          "id": "MARKER_METERS",
+          "type": "NUMBER"
+        },
+        {
+          "id": "ROWS",
+          "type": "NUMBER"
+        },
+        {
+          "id": "SCALE_SOURCE",
+          "type": "STRING"
+        },
+        {
+          "id": "SQUARE_METERS",
+          "type": "NUMBER"
         }
       ]
     },

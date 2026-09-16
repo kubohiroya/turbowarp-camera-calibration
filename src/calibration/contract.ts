@@ -41,7 +41,26 @@ export type CalibrationErrorCode =
   | 'credential-forbidden'
   | 'calibration-not-applicable'
   | 'not-calibrated'
+  | 'board-pose-unavailable'
   | 'publish-failed';
+
+/**
+ * Where the scale of a measured pose came from.
+ *
+ * Intrinsic calibration needs no real-world dimensions, and the operator is
+ * told so. A pose is metric, and its scale comes entirely from the declared
+ * square size -- so a pose measured against a square nobody put a ruler to is
+ * correct in direction and wrong in scale, by however much the print or the
+ * display was off. That does not show up in the reprojection error. It has to
+ * be carried with the number instead.
+ */
+export type BoardScaleSource = 'measured' | 'nominal';
+
+export interface BoardPoseOptions {
+  cameraId: string;
+  board: CalibrationBoard;
+  scaleSource: BoardScaleSource;
+}
 
 export interface CalibrationStartOptions {
   cameraId: string;
