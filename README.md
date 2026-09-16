@@ -74,21 +74,15 @@ Verify a finished calibration against images that were not part of the solve. A
 low reprojection error on the calibration samples alone does not prove the
 result generalizes.
 
-## Enabling calibration
+## When the solver loads
 
-The calibration path is fixed at startup and defaults to OFF, so loading this
-extension changes nothing until it is switched on. With the flag OFF, only the
-`camera calibration state` reporter is published and it answers `idle`; no
-camera lease is taken and the OpenCV runtime is never initialized.
+Every block is in the palette as soon as the extension is registered, and the
+runtime capability is on the runtime. Nothing is switched on separately.
 
-Set the override before the extension is registered:
-
-```js
-globalThis.__TWCC_FEATURE_FLAGS__ = {cameraCalibrationV1: true};
-```
-
-The flags are read once and frozen. Changing the value afterwards has no effect,
-which keeps a running project from switching contracts mid-session.
+The OpenCV runtime is not loaded with the extension. It is created on the first
+sample or solve and never before, so a project that only reads
+`camera calibration state` or `camera calibration backend` pays nothing for it.
+No camera lease is taken until a calibration starts.
 
 ## Installation
 
@@ -108,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.3.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.4.0
 ```
 
 Load the standalone bundle from:
@@ -120,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.3.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.4.0/dist/camera-calibration.js
 ```
 
 ## Quick start

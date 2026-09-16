@@ -73,20 +73,15 @@ flagが止めるのは実行であってバイト数ではないためです。
 校正の確認は、solveに使っていない別の画像で行ってください。採用サンプルに対する
 再投影誤差が小さいことは、その結果が一般に通用することの証明にはなりません。
 
-## 校正機能を有効にする
+## solverが読み込まれるタイミング
 
-校正経路は起動時に固定され、既定はOFFです。この機能拡張を読み込むだけでは
-何も変わりません。OFFの間は`camera calibration state`のreporterだけが提供され、
-常に`idle`を返します。カメラのleaseは取得せず、OpenCVのruntimeも初期化しません。
+機能拡張を登録した時点で全ブロックがパレットに出ており、runtime capabilityも
+runtimeに載っています。別途有効化する操作はありません。
 
-機能拡張の登録前に上書き値を設定します。
-
-```js
-globalThis.__TWCC_FEATURE_FLAGS__ = {cameraCalibrationV1: true};
-```
-
-flagは一度だけ読み取って凍結します。あとから値を変えても影響しません。実行中の
-projectが途中で契約を切り替えることを防ぐためです。
+OpenCVのruntimeは機能拡張と一緒には読み込まれません。最初のサンプル取得か
+solveで初めて生成されるので、`camera calibration state`や
+`camera calibration backend`を読むだけのprojectには一切の負荷がかかりません。
+カメラのleaseも、校正を開始するまで取得しません。
 
 ## インストール
 
@@ -106,7 +101,7 @@ bundleは約11 MBあります。
 検証済みのversionをexact pinします。
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.3.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.4.0
 ```
 
 standalone bundle:
@@ -118,7 +113,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 version固定CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.3.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.4.0/dist/camera-calibration.js
 ```
 
 ## クイックスタート
