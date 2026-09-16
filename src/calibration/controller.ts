@@ -419,9 +419,12 @@ class CameraCalibration {
     }
     if (operation !== this.operation) return;
     if (!sample) this.reject('board-not-found', 'The complete chessboard was not found.');
-    const expectedCorners = session.board.columns * session.board.rows;
+    // A view need not show the whole board. The markers name each corner, so a
+    // board running off the edge of the frame still contributes what it shows,
+    // and those corners are near the image border -- which is where the
+    // principal point and the distortion are decided.
     if (
-      sample.corners.length !== expectedCorners ||
+      sample.corners.length !== sample.ids.length ||
       !Number.isFinite(sample.quality) ||
       sample.quality < MINIMUM_SAMPLE_QUALITY
     ) {
@@ -725,6 +728,15 @@ function normalizeStartOptions(options: CalibrationStartOptions): CalibrationSta
   ) {
     throw new Error('square size must be within (0, 1] meter.');
   }
+  // The marker has to leave white around it inside its square, or the detector
+  // cannot separate it from the dark squares it touches.
+  if (
+    !Number.isFinite(options.board.markerSizeMeters) ||
+    options.board.markerSizeMeters <= 0 ||
+    options.board.markerSizeMeters >= options.board.squareSizeMeters
+  ) {
+    throw new Error('marker size must be greater than zero and smaller than the square size.');
+  }
   if (
     !Number.isFinite(options.maximumReprojectionErrorPx) ||
     options.maximumReprojectionErrorPx <= 0 ||
@@ -735,7 +747,12 @@ function normalizeStartOptions(options: CalibrationStartOptions): CalibrationSta
   return {
     cameraId: identifier(options.cameraId, 'camera ID'),
     calibrationId: identifier(options.calibrationId, 'calibration ID'),
-    board: {columns, rows, squareSizeMeters: options.board.squareSizeMeters},
+    board: {
+      columns,
+      rows,
+      squareSizeMeters: options.board.squareSizeMeters,
+      markerSizeMeters: options.board.markerSizeMeters
+    },
     maximumReprojectionErrorPx: options.maximumReprojectionErrorPx
   };
 }

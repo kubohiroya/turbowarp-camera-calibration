@@ -2,7 +2,7 @@ import {describe, expect, it} from 'vitest';
 import {MINIMUM_POSE_SPREAD, poseSpread, tiltOf} from '../src/calibration/pose.js';
 import type {CalibrationBoard, CalibrationSample} from '../src/calibration/types.js';
 
-const BOARD: CalibrationBoard = {columns: 9, rows: 6, squareSizeMeters: 0.025};
+const BOARD: CalibrationBoard = {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018};
 
 /** A 9x6 board seen through a pinhole, tilted by (gx, gy) and shifted. */
 function view(gx: number, gy: number, shiftX = 0, shiftY = 0): CalibrationSample {
@@ -13,6 +13,7 @@ function view(gx: number, gy: number, shiftX = 0, shiftY = 0): CalibrationSample
       const depth = 1 + gx * u + gy * v;
       return {x: 400 + shiftX + (320 * u) / depth, y: 300 + shiftY + (240 * v) / depth};
     }),
+    ids: Array.from({length: 54}, (_, index) => index),
     quality: 0.8,
     coverage: 0.25,
     sharpness: 120
@@ -52,6 +53,7 @@ describe('how obliquely a board was seen', () => {
         x: 400 + (x - 400) / 2,
         y: 300 + (y - 300) / 2
       })),
+      ids: Array.from({length: 54}, (_, index) => index),
       quality: 0.8,
       coverage: 0.25,
       sharpness: 120

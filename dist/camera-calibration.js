@@ -48,8 +48,8 @@
   		{
   			"opcode": "startCameraCalibration",
   			"blockType": "COMMAND",
-  			"text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m max error [MAX_ERROR_PX] px",
-  			"description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is measured in inner corners, not printed squares.",
+  			"text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m max error [MAX_ERROR_PX] px",
+  			"description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is a ChArUco target: a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.",
   			"arguments": {
   				"CAMERA_ID": {
   					"type": "STRING",
@@ -70,6 +70,10 @@
   				"SQUARE_METERS": {
   					"type": "NUMBER",
   					"defaultValue": .025
+  				},
+  				"MARKER_METERS": {
+  					"type": "NUMBER",
+  					"defaultValue": .018
   				},
   				"MAX_ERROR_PX": {
   					"type": "NUMBER",
@@ -682,16 +686,27 @@
   var MINIMUM_POSE_SPREAD = .08;
   function tiltOf(sample, board) {
   	const { columns, rows } = board;
-  	if (sample.corners.length !== columns * rows) return NO_TILT;
-  	const at = (column, row) => sample.corners[row * columns + column];
-  	const topLeft = at(0, 0);
-  	const topRight = at(columns - 1, 0);
-  	const bottomLeft = at(0, rows - 1);
-  	const bottomRight = at(columns - 1, rows - 1);
-  	if (!topLeft || !topRight || !bottomLeft || !bottomRight) return NO_TILT;
+  	const at = /* @__PURE__ */ new Map();
+  	sample.ids.forEach((id, index) => {
+  		const corner = sample.corners[index];
+  		if (corner) at.set(id, corner);
+  	});
+  	if (at.size < 4) return NO_TILT;
+  	const acrossNear = [];
+  	const acrossFar = [];
+  	const downNear = [];
+  	const downFar = [];
+  	for (const [id, corner] of at) {
+  		const column = id % columns;
+  		const row = Math.floor(id / columns);
+  		const right = column + 1 < columns ? at.get(id + 1) : void 0;
+  		if (right) (row * 2 < rows - 1 ? acrossNear : acrossFar).push(distance(corner, right));
+  		const below = row + 1 < rows ? at.get(id + columns) : void 0;
+  		if (below) (column * 2 < columns - 1 ? downNear : downFar).push(distance(corner, below));
+  	}
   	return {
-  		x: logRatio(distance(topLeft, topRight), distance(bottomLeft, bottomRight)),
-  		y: logRatio(distance(topLeft, bottomLeft), distance(topRight, bottomRight))
+  		x: logRatio(mean(acrossNear), mean(acrossFar)),
+  		y: logRatio(mean(downNear), mean(downFar))
   	};
   }
   /**
@@ -710,6 +725,10 @@
   	};
   	const squared = tilts.reduce((total, tilt) => total + (tilt.x - mean.x) ** 2 + (tilt.y - mean.y) ** 2, 0) / tilts.length;
   	return Math.sqrt(squared);
+  }
+  function mean(values) {
+  	if (values.length === 0) return 0;
+  	return values.reduce((total, value) => total + value, 0) / values.length;
   }
   function logRatio(first, second) {
   	if (!(first > 0) || !(second > 0)) return 0;
@@ -989,8 +1008,7 @@
   		}
   		if (operation !== this.operation) return;
   		if (!sample) this.reject("board-not-found", "The complete chessboard was not found.");
-  		const expectedCorners = session.board.columns * session.board.rows;
-  		if (sample.corners.length !== expectedCorners || !Number.isFinite(sample.quality) || sample.quality < MINIMUM_SAMPLE_QUALITY) this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
+  		if (sample.corners.length !== sample.ids.length || !Number.isFinite(sample.quality) || sample.quality < MINIMUM_SAMPLE_QUALITY) this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
   		const accepted = sample;
   		if (this.samples.some((previous) => normalizedCornerDistance(previous, accepted, session.imageWidth, session.imageHeight) < MINIMUM_NORMALIZED_NOVELTY)) this.reject("sample-too-similar", "Move or tilt the board before capturing another sample.");
   		this.samples.push(accepted);
@@ -1215,6 +1233,7 @@
   	const columns = integerInRange(options.board.columns, 3, 20, "columns");
   	const rows = integerInRange(options.board.rows, 3, 20, "rows");
   	if (!Number.isFinite(options.board.squareSizeMeters) || options.board.squareSizeMeters <= 0 || options.board.squareSizeMeters > 1) throw new Error("square size must be within (0, 1] meter.");
+  	if (!Number.isFinite(options.board.markerSizeMeters) || options.board.markerSizeMeters <= 0 || options.board.markerSizeMeters >= options.board.squareSizeMeters) throw new Error("marker size must be greater than zero and smaller than the square size.");
   	if (!Number.isFinite(options.maximumReprojectionErrorPx) || options.maximumReprojectionErrorPx <= 0 || options.maximumReprojectionErrorPx > 100) throw new Error("maximum reprojection error must be within (0, 100] px.");
   	return {
   		cameraId: identifier(options.cameraId, "camera ID"),
@@ -1222,7 +1241,8 @@
   		board: {
   			columns,
   			rows,
-  			squareSizeMeters: options.board.squareSizeMeters
+  			squareSizeMeters: options.board.squareSizeMeters,
+  			markerSizeMeters: options.board.markerSizeMeters
   		},
   		maximumReprojectionErrorPx: options.maximumReprojectionErrorPx
   	};
@@ -8660,7 +8680,15 @@
   * The single pinned production solver. The version is part of the identifier so
   * that a project can record which build produced a profile.
   */
-  var OPENCV_BACKEND_NAME = "opencv-js-wasm-4.12.0";
+  var OPENCV_BACKEND_NAME = "opencv-js-wasm-4.12.0-charuco";
+  /**
+  * The fewest corners a view has to show to be worth keeping.
+  *
+  * A ChArUco view need not show the whole board -- that is the point of the
+  * markers -- but a handful of corners constrains almost nothing and drags the
+  * solve out for no gain. Six is two markers' worth.
+  */
+  var MINIMUM_CORNERS = 6;
   var openCvPromise;
   /**
   * Detects the chessboard and solves the camera intrinsics with OpenCV.
@@ -8672,6 +8700,38 @@
   var OpenCvChessboardCalibrationBackend = class {
   	constructor() {
   		this.name = OPENCV_BACKEND_NAME;
+  		this.detectors = /* @__PURE__ */ new Map();
+  	}
+  	detectorFor(cv, board) {
+  		return this.entryFor(cv, board).detector;
+  	}
+  	entryFor(cv, board) {
+  		const key = `${board.columns}x${board.rows}:${board.squareSizeMeters}:${board.markerSizeMeters}`;
+  		const existing = this.detectors.get(key);
+  		if (existing) return existing;
+  		const dictionary = cv.getPredefinedDictionary(cv.DICT_4X4_50);
+  		const ids = new cv.Mat();
+  		const charuco = new cv.aruco_CharucoBoard(new cv.Size(board.columns + 1, board.rows + 1), board.squareSizeMeters, board.markerSizeMeters, dictionary, ids);
+  		const entry = {
+  			board: charuco,
+  			detector: new cv.aruco_CharucoDetector(charuco, new cv.aruco_CharucoParameters(), new cv.aruco_DetectorParameters(), new cv.aruco_RefineParameters(10, 3, true))
+  		};
+  		this.detectors.set(key, entry);
+  		return entry;
+  	}
+  	/** Where each inner corner sits on the board, in metres. */
+  	worldPointsFor(cv, board) {
+  		const corners = this.entryFor(cv, board).board.getChessboardCorners();
+  		const points = [];
+  		for (let index = 0; index < corners.size(); index += 1) {
+  			const point = corners.get(index);
+  			points.push([
+  				point.x,
+  				point.y,
+  				point.z ?? 0
+  			]);
+  		}
+  		return points;
   	}
   	async captureSample(frame, board) {
   		const cv = await getOpenCv();
@@ -8684,21 +8744,25 @@
   		const source = cv.imread(canvas);
   		const gray = new cv.Mat();
   		const corners = new cv.Mat();
+  		const ids = new cv.Mat();
   		const laplacian = new cv.Mat();
   		const mean = new cv.Mat();
   		const standardDeviation = new cv.Mat();
   		try {
   			cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-  			if (!cv.findChessboardCorners(gray, new cv.Size(board.columns, board.rows), corners, cv.CALIB_CB_ADAPTIVE_THRESH | cv.CALIB_CB_NORMALIZE_IMAGE)) return void 0;
-  			cv.cornerSubPix(gray, corners, new cv.Size(11, 11), new cv.Size(-1, -1), new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_MAX_ITER, 30, .01));
+  			this.detectorFor(cv, board).detectBoard(gray, corners, ids);
+  			if (ids.rows < MINIMUM_CORNERS) return void 0;
   			const points = readPointPairs(corners.data32F);
+  			const identifiers = Array.from(ids.data32S);
   			cv.Laplacian(gray, laplacian, cv.CV_64F);
   			cv.meanStdDev(laplacian, mean, standardDeviation);
   			const sharpness = standardDeviation.doubleAt(0, 0) ** 2;
   			const coverage = boardCoverage(points, frame.width, frame.height);
+  			const completeness = identifiers.length / (board.columns * board.rows);
   			return {
   				corners: points,
-  				quality: clamp01(.7 * Math.min(1, coverage / .25) + .3 * Math.min(1, sharpness / 100)),
+  				ids: identifiers,
+  				quality: clamp01(.5 * Math.min(1, coverage / .25) + .3 * Math.min(1, sharpness / 100) + .2 * completeness),
   				coverage,
   				sharpness
   			};
@@ -8706,6 +8770,7 @@
   			standardDeviation.delete();
   			mean.delete();
   			laplacian.delete();
+  			ids.delete();
   			corners.delete();
   			gray.delete();
   			source.delete();
@@ -8721,17 +8786,24 @@
   		const translationVectors = new cv.MatVector();
   		const cameraMatrix = cv.Mat.eye(3, 3, cv.CV_64F);
   		const distortionCoefficients = cv.Mat.zeros(8, 1, cv.CV_64F);
+  		const standardDeviationsIntrinsics = new cv.Mat();
+  		const standardDeviationsExtrinsics = new cv.Mat();
+  		const perViewErrors = new cv.Mat();
   		const retainedMats = [];
   		try {
-  			const worldPoints = chessboardWorldPoints(board);
+  			const worldPoints = this.worldPointsFor(cv, board);
   			for (const sample of samples) {
-  				const objectPoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC3, worldPoints);
+  				const objectPoint = cv.matFromArray(sample.ids.length, 1, cv.CV_32FC3, sample.ids.flatMap((id) => worldPoints[id] ?? [
+  					0,
+  					0,
+  					0
+  				]));
   				const imagePoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC2, sample.corners.flatMap(({ x, y }) => [x, y]));
   				retainedMats.push(objectPoint, imagePoint);
   				objectPoints.push_back(objectPoint);
   				imagePoints.push_back(imagePoint);
   			}
-  			const reprojectionErrorPx = cv.calibrateCamera(objectPoints, imagePoints, new cv.Size(imageWidth, imageHeight), cameraMatrix, distortionCoefficients, rotationVectors, translationVectors);
+  			const reprojectionErrorPx = cv.calibrateCameraExtended(objectPoints, imagePoints, new cv.Size(imageWidth, imageHeight), cameraMatrix, distortionCoefficients, rotationVectors, translationVectors, standardDeviationsIntrinsics, standardDeviationsExtrinsics, perViewErrors);
   			const coefficientCount = distortionCoefficients.rows * distortionCoefficients.cols;
   			return {
   				intrinsicMatrix: readMatrix(cameraMatrix, 9),
@@ -8741,6 +8813,9 @@
   			};
   		} finally {
   			for (const matrix of retainedMats) matrix.delete();
+  			perViewErrors.delete();
+  			standardDeviationsExtrinsics.delete();
+  			standardDeviationsIntrinsics.delete();
   			distortionCoefficients.delete();
   			cameraMatrix.delete();
   			translationVectors.delete();
@@ -8762,7 +8837,7 @@
   	async validate(samples, board, solution) {
   		if (samples.length === 0) return 0;
   		const cv = await getOpenCv();
-  		const worldPoints = chessboardWorldPoints(board);
+  		const worldPoints = this.worldPointsFor(cv, board);
   		const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
   		const distortion = cv.matFromArray(Math.max(1, solution.distortionCoefficients.length), 1, cv.CV_64F, solution.distortionCoefficients.length > 0 ? solution.distortionCoefficients : [0]);
   		let squared = 0;
@@ -8770,7 +8845,11 @@
   		const scratch = [cameraMatrix, distortion];
   		try {
   			for (const sample of samples) {
-  				const objectPoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC3, worldPoints);
+  				const objectPoint = cv.matFromArray(sample.ids.length, 1, cv.CV_32FC3, sample.ids.flatMap((id) => worldPoints[id] ?? [
+  					0,
+  					0,
+  					0
+  				]));
   				const imagePoint = cv.matFromArray(sample.corners.length, 1, cv.CV_32FC2, sample.corners.flatMap(({ x, y }) => [x, y]));
   				const rotation = new cv.Mat();
   				const translation = new cv.Mat();
@@ -8793,6 +8872,14 @@
   		return counted > 0 ? Math.sqrt(squared / counted) : 0;
   	}
   };
+  function readMatrix(matrix, expected) {
+  	const values = Array.from(matrix.data64F.slice(0, expected));
+  	if (values.length !== expected || values.some((value) => !Number.isFinite(value))) throw new Error(`OpenCV returned an invalid ${expected}-element matrix.`);
+  	return values;
+  }
+  function clamp01(value) {
+  	return Math.min(1, Math.max(0, value));
+  }
   /**
   * Names the solver without constructing it, so that reading the backend
   * reporter — or loading the extension at all — never initializes the OpenCV
@@ -8833,19 +8920,6 @@
   	const xs = points.map(({ x }) => x);
   	const ys = points.map(({ y }) => y);
   	return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)) / (width * height);
-  }
-  function chessboardWorldPoints(board) {
-  	const points = [];
-  	for (let row = 0; row < board.rows; row += 1) for (let column = 0; column < board.columns; column += 1) points.push(column * board.squareSizeMeters, row * board.squareSizeMeters, 0);
-  	return points;
-  }
-  function readMatrix(matrix, expected) {
-  	const values = Array.from(matrix.data64F.slice(0, expected));
-  	if (values.length !== expected || values.some((value) => !Number.isFinite(value))) throw new Error(`OpenCV returned an invalid ${expected}-element matrix.`);
-  	return values;
-  }
-  function clamp01(value) {
-  	return Math.min(1, Math.max(0, value));
   }
   //#endregion
   //#region src/runtime-capability.ts
@@ -8927,7 +9001,8 @@
   			board: {
   				columns: Scratch.Cast.toNumber(args.COLUMNS),
   				rows: Scratch.Cast.toNumber(args.ROWS),
-  				squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS)
+  				squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS),
+  				markerSizeMeters: Scratch.Cast.toNumber(args.MARKER_METERS)
   			},
   			maximumReprojectionErrorPx: Scratch.Cast.toNumber(args.MAX_ERROR_PX)
   		});

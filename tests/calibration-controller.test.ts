@@ -11,7 +11,7 @@ import type {CameraFrameSource, CameraLease} from '../src/calibration/camera-sou
 const startOptions = {
   cameraId: 'camera-1',
   calibrationId: 'calibration-1',
-  board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+  board: {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018},
   maximumReprojectionErrorPx: 1.5
 };
 
@@ -481,6 +481,7 @@ describe('CameraCalibrationController', () => {
           x: 200 + (corner % 9) * 40 + index * 25,
           y: 150 + Math.floor(corner / 9) * 40 + index * 15
         })),
+        ids: Array.from({length: 54}, (_, corner) => corner),
         quality: 0.8,
         coverage: 0.25,
         sharpness: 120
@@ -639,6 +640,7 @@ function sample(offset: number): CalibrationSample {
         y: 300 + shiftY + (240 * v) / depth
       };
     }),
+    ids: Array.from({length: 54}, (_, index) => index),
     quality: 0.8,
     coverage: 0.25,
     sharpness: 120

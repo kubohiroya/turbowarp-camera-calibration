@@ -77,6 +77,7 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     COLUMNS: unknown;
     ROWS: unknown;
     SQUARE_METERS: unknown;
+    MARKER_METERS: unknown;
     MAX_ERROR_PX: unknown;
   }): Promise<void> {
     await this.controller.start({
@@ -85,7 +86,8 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
       board: {
         columns: Scratch.Cast.toNumber(args.COLUMNS),
         rows: Scratch.Cast.toNumber(args.ROWS),
-        squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS)
+        squareSizeMeters: Scratch.Cast.toNumber(args.SQUARE_METERS),
+        markerSizeMeters: Scratch.Cast.toNumber(args.MARKER_METERS)
       },
       maximumReprojectionErrorPx: Scratch.Cast.toNumber(args.MAX_ERROR_PX)
     });

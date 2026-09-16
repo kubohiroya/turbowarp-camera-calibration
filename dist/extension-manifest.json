@@ -212,6 +212,10 @@
           "type": "NUMBER"
         },
         {
+          "id": "MARKER_METERS",
+          "type": "NUMBER"
+        },
+        {
           "id": "MAX_ERROR_PX",
           "type": "NUMBER"
         },

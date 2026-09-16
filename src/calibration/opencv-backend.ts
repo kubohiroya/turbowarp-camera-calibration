@@ -13,12 +13,22 @@ import type {
  * The single pinned production solver. The version is part of the identifier so
  * that a project can record which build produced a profile.
  */
-export const OPENCV_BACKEND_NAME = 'opencv-js-wasm-4.12.0';
+export const OPENCV_BACKEND_NAME = 'opencv-js-wasm-4.12.0-charuco';
+
+/**
+ * The fewest corners a view has to show to be worth keeping.
+ *
+ * A ChArUco view need not show the whole board -- that is the point of the
+ * markers -- but a handful of corners constrains almost nothing and drags the
+ * solve out for no gain. Six is two markers' worth.
+ */
+const MINIMUM_CORNERS = 6;
 
 interface CvMat {
   readonly rows: number;
   readonly cols: number;
   readonly data32F: Float32Array;
+  readonly data32S: Int32Array;
   readonly data64F: Float64Array;
   doubleAt(row: number, column: number): number;
   delete(): void;
@@ -33,6 +43,22 @@ interface CvMatConstructor {
 interface CvMatVector {
   push_back(value: CvMat): void;
   get(index: number): CvMat;
+  delete(): void;
+}
+
+interface CvPoint3fVector {
+  size(): number;
+  get(index: number): {x: number; y: number; z: number};
+  delete(): void;
+}
+
+interface CvCharucoBoard {
+  getChessboardCorners(): CvPoint3fVector;
+  delete(): void;
+}
+
+interface CvCharucoDetector {
+  detectBoard(image: CvMat, corners: CvMat, ids: CvMat): void;
   delete(): void;
 }
 
@@ -51,19 +77,28 @@ interface CvApi {
   TermCriteria: new (type: number, maxCount: number, epsilon: number) => unknown;
   imread(source: HTMLCanvasElement): CvMat;
   cvtColor(source: CvMat, destination: CvMat, code: number): void;
-  findChessboardCorners(
-    image: CvMat,
-    patternSize: unknown,
-    corners: CvMat,
-    flags: number
-  ): boolean;
-  cornerSubPix(
-    image: CvMat,
-    corners: CvMat,
-    window: unknown,
-    zeroZone: unknown,
-    criteria: unknown
-  ): void;
+  DICT_4X4_50: number;
+  getPredefinedDictionary(name: number): unknown;
+  aruco_CharucoBoard: new (
+    size: unknown,
+    squareLength: number,
+    markerLength: number,
+    dictionary: unknown,
+    ids: CvMat
+  ) => CvCharucoBoard;
+  aruco_CharucoParameters: new () => unknown;
+  aruco_DetectorParameters: new () => unknown;
+  aruco_RefineParameters: new (
+    minRepDistance: number,
+    errorCorrectionRate: number,
+    checkAllOrders: boolean
+  ) => unknown;
+  aruco_CharucoDetector: new (
+    board: CvCharucoBoard,
+    charucoParameters: unknown,
+    detectorParameters: unknown,
+    refineParameters: unknown
+  ) => CvCharucoDetector;
   Laplacian(source: CvMat, destination: CvMat, depth: number): void;
   meanStdDev(source: CvMat, mean: CvMat, standardDeviation: CvMat): void;
   matFromArray(
@@ -88,14 +123,17 @@ interface CvApi {
     distortionCoefficients: CvMat,
     imagePoints: CvMat
   ): void;
-  calibrateCamera(
+  calibrateCameraExtended(
     objectPoints: CvMatVector,
     imagePoints: CvMatVector,
     imageSize: unknown,
     cameraMatrix: CvMat,
     distortionCoefficients: CvMat,
     rotationVectors: CvMatVector,
-    translationVectors: CvMatVector
+    translationVectors: CvMatVector,
+    standardDeviationsIntrinsics: CvMat,
+    standardDeviationsExtrinsics: CvMat,
+    perViewErrors: CvMat
   ): number;
   getBuildInformation(): string;
 }
@@ -112,6 +150,59 @@ let openCvPromise: Promise<CvApi> | undefined;
 export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPort {
   public readonly name = OPENCV_BACKEND_NAME;
 
+  /**
+   * One detector per board, built on first use.
+   *
+   * Building it means constructing the dictionary, the board and three
+   * parameter objects, none of which depend on the frame. Rebuilding that for
+   * every sample would put it on the path the operator is waiting on.
+   */
+  private readonly detectors = new Map<string, {board: CvCharucoBoard; detector: CvCharucoDetector}>();
+
+  private detectorFor(cv: CvApi, board: CalibrationBoard): CvCharucoDetector {
+    return this.entryFor(cv, board).detector;
+  }
+
+  private entryFor(
+    cv: CvApi,
+    board: CalibrationBoard
+  ): {board: CvCharucoBoard; detector: CvCharucoDetector} {
+    const key = `${board.columns}x${board.rows}:${board.squareSizeMeters}:${board.markerSizeMeters}`;
+    const existing = this.detectors.get(key);
+    if (existing) return existing;
+    const dictionary = cv.getPredefinedDictionary(cv.DICT_4X4_50);
+    const ids = new cv.Mat();
+    // The board is one square larger than its inner corner grid in each
+    // direction, which is the same relationship a plain chessboard has.
+    const charuco = new cv.aruco_CharucoBoard(
+      new cv.Size(board.columns + 1, board.rows + 1),
+      board.squareSizeMeters,
+      board.markerSizeMeters,
+      dictionary,
+      ids
+    );
+    const detector = new cv.aruco_CharucoDetector(
+      charuco,
+      new cv.aruco_CharucoParameters(),
+      new cv.aruco_DetectorParameters(),
+      new cv.aruco_RefineParameters(10, 3, true)
+    );
+    const entry = {board: charuco, detector};
+    this.detectors.set(key, entry);
+    return entry;
+  }
+
+  /** Where each inner corner sits on the board, in metres. */
+  private worldPointsFor(cv: CvApi, board: CalibrationBoard): number[][] {
+    const corners = this.entryFor(cv, board).board.getChessboardCorners();
+    const points: number[][] = [];
+    for (let index = 0; index < corners.size(); index += 1) {
+      const point = corners.get(index);
+      points.push([point.x, point.y, point.z ?? 0]);
+    }
+    return points;
+  }
+
   public async captureSample(
     frame: CalibrationFrame,
     board: CalibrationBoard
@@ -127,38 +218,36 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
     const source = cv.imread(canvas);
     const gray = new cv.Mat();
     const corners = new cv.Mat();
+    const ids = new cv.Mat();
     const laplacian = new cv.Mat();
     const mean = new cv.Mat();
     const standardDeviation = new cv.Mat();
     try {
       cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-      const found = cv.findChessboardCorners(
-        gray,
-        new cv.Size(board.columns, board.rows),
-        corners,
-        cv.CALIB_CB_ADAPTIVE_THRESH | cv.CALIB_CB_NORMALIZE_IMAGE
-      );
-      if (!found) return undefined;
-      cv.cornerSubPix(
-        gray,
-        corners,
-        new cv.Size(11, 11),
-        new cv.Size(-1, -1),
-        new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_MAX_ITER, 30, 0.01)
-      );
+      const detector = this.detectorFor(cv, board);
+      detector.detectBoard(gray, corners, ids);
+      // No corners at all is a board that is not in frame. A few is a board
+      // mostly out of frame, and those are kept: the corners near the edge of
+      // the image are the ones that pin down the principal point.
+      if (ids.rows < MINIMUM_CORNERS) return undefined;
       const points = readPointPairs(corners.data32F);
+      const identifiers: number[] = Array.from(ids.data32S);
       cv.Laplacian(gray, laplacian, cv.CV_64F);
       cv.meanStdDev(laplacian, mean, standardDeviation);
       const sharpness = standardDeviation.doubleAt(0, 0) ** 2;
       const coverage = boardCoverage(points, frame.width, frame.height);
+      const completeness = identifiers.length / (board.columns * board.rows);
       const quality = clamp01(
-        0.7 * Math.min(1, coverage / 0.25) + 0.3 * Math.min(1, sharpness / 100)
+        0.5 * Math.min(1, coverage / 0.25) +
+          0.3 * Math.min(1, sharpness / 100) +
+          0.2 * completeness
       );
-      return {corners: points, quality, coverage, sharpness};
+      return {corners: points, ids: identifiers, quality, coverage, sharpness};
     } finally {
       standardDeviation.delete();
       mean.delete();
       laplacian.delete();
+      ids.delete();
       corners.delete();
       gray.delete();
       source.delete();
@@ -180,15 +269,21 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
     const translationVectors = new cv.MatVector();
     const cameraMatrix = cv.Mat.eye(3, 3, cv.CV_64F);
     const distortionCoefficients = cv.Mat.zeros(8, 1, cv.CV_64F);
+    const standardDeviationsIntrinsics = new cv.Mat();
+    const standardDeviationsExtrinsics = new cv.Mat();
+    const perViewErrors = new cv.Mat();
     const retainedMats: CvMat[] = [];
     try {
-      const worldPoints = chessboardWorldPoints(board);
+      const worldPoints = this.worldPointsFor(cv, board);
       for (const sample of samples) {
+        // A view contributes the corners it showed, named by their ids. Views
+        // therefore differ in length, which the solver accepts and a plain
+        // chessboard could never produce.
         const objectPoint = cv.matFromArray(
-          sample.corners.length,
+          sample.ids.length,
           1,
           cv.CV_32FC3,
-          worldPoints
+          sample.ids.flatMap((id) => worldPoints[id] ?? [0, 0, 0])
         );
         const imagePoint = cv.matFromArray(
           sample.corners.length,
@@ -200,14 +295,17 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
         objectPoints.push_back(objectPoint);
         imagePoints.push_back(imagePoint);
       }
-      const reprojectionErrorPx = cv.calibrateCamera(
+      const reprojectionErrorPx = cv.calibrateCameraExtended(
         objectPoints,
         imagePoints,
         new cv.Size(imageWidth, imageHeight),
         cameraMatrix,
         distortionCoefficients,
         rotationVectors,
-        translationVectors
+        translationVectors,
+        standardDeviationsIntrinsics,
+        standardDeviationsExtrinsics,
+        perViewErrors
       );
       // OpenCV resizes the coefficient matrix to the model it actually fitted,
       // so the returned length identifies the distortion model.
@@ -220,6 +318,9 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
       };
     } finally {
       for (const matrix of retainedMats) matrix.delete();
+      perViewErrors.delete();
+      standardDeviationsExtrinsics.delete();
+      standardDeviationsIntrinsics.delete();
       distortionCoefficients.delete();
       cameraMatrix.delete();
       translationVectors.delete();
@@ -246,7 +347,7 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
   ): Promise<number> {
     if (samples.length === 0) return 0;
     const cv = await getOpenCv();
-    const worldPoints = chessboardWorldPoints(board);
+    const worldPoints = this.worldPointsFor(cv, board);
     const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
     const distortion = cv.matFromArray(
       Math.max(1, solution.distortionCoefficients.length),
@@ -262,10 +363,10 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
     try {
       for (const sample of samples) {
         const objectPoint = cv.matFromArray(
-          sample.corners.length,
+          sample.ids.length,
           1,
           cv.CV_32FC3,
-          worldPoints
+          sample.ids.flatMap((id) => worldPoints[id] ?? [0, 0, 0])
         );
         const imagePoint = cv.matFromArray(
           sample.corners.length,
@@ -313,6 +414,19 @@ export class OpenCvChessboardCalibrationBackend implements CalibrationBackendPor
     }
     return counted > 0 ? Math.sqrt(squared / counted) : 0;
   }
+}
+
+
+function readMatrix(matrix: CvMat, expected: number): number[] {
+  const values = Array.from(matrix.data64F.slice(0, expected));
+  if (values.length !== expected || values.some((value) => !Number.isFinite(value))) {
+    throw new Error(`OpenCV returned an invalid ${expected}-element matrix.`);
+  }
+  return values;
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 /**
@@ -380,26 +494,4 @@ function boardCoverage(
     ((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))) /
     (width * height)
   );
-}
-
-function chessboardWorldPoints(board: CalibrationBoard): number[] {
-  const points: number[] = [];
-  for (let row = 0; row < board.rows; row += 1) {
-    for (let column = 0; column < board.columns; column += 1) {
-      points.push(column * board.squareSizeMeters, row * board.squareSizeMeters, 0);
-    }
-  }
-  return points;
-}
-
-function readMatrix(matrix: CvMat, expected: number): number[] {
-  const values = Array.from(matrix.data64F.slice(0, expected));
-  if (values.length !== expected || values.some((value) => !Number.isFinite(value))) {
-    throw new Error(`OpenCV returned an invalid ${expected}-element matrix.`);
-  }
-  return values;
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }

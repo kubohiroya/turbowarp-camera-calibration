@@ -4,8 +4,8 @@
     {
       "opcode": "startCameraCalibration",
       "blockType": "COMMAND",
-      "text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m max error [MAX_ERROR_PX] px",
-      "description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is measured in inner corners, not printed squares.",
+      "text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m max error [MAX_ERROR_PX] px",
+      "description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is a ChArUco target: a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",
@@ -26,6 +26,10 @@
         "SQUARE_METERS": {
           "type": "NUMBER",
           "defaultValue": 0.025
+        },
+        "MARKER_METERS": {
+          "type": "NUMBER",
+          "defaultValue": 0.018
         },
         "MAX_ERROR_PX": {
           "type": "NUMBER",

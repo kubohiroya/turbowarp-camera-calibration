@@ -14,16 +14,20 @@ import type {CalibrationBoard, CalibrationCorner, CalibrationSample} from './typ
  * so a set collected without ever tilting the board passes it, solves, and
  * reports a small reprojection error for a calibration that is wrong.
  *
- * Measured from the outer quad alone, as the log ratio of opposite edge
- * lengths. Under perspective the nearer edge is longer; seen square on, both
- * pairs are equal and this is zero. Logs because the measure has to be the same
- * whichever edge is named first, and ratios because it has to be the same at
- * any distance or image scale.
+ * Measured as the log ratio of how long the board's own grid steps come out in
+ * one half of it against the other. Under perspective the nearer half is
+ * magnified; seen square on, both halves match and this is zero. Logs because
+ * the measure has to read the same whichever half is named first, and ratios
+ * because it has to read the same at any distance or image scale.
+ *
+ * Every adjacent pair of corners is used rather than the outer quad, so a view
+ * that shows only part of the board still gives an answer -- which it has to,
+ * since a ChArUco board is meant to be usable when it runs off the frame.
  */
 export interface Tilt {
-  /** Top edge against bottom edge: tilt about the horizontal axis. */
+  /** Upper half against lower half: how far the board is turned about the horizontal axis. */
   readonly x: number;
-  /** Left edge against right edge: tilt about the vertical axis. */
+  /** Left half against right half: how far it is turned about the vertical axis. */
   readonly y: number;
 }
 
@@ -41,16 +45,33 @@ export const MINIMUM_POSE_SPREAD = 0.08;
 
 export function tiltOf(sample: CalibrationSample, board: CalibrationBoard): Tilt {
   const {columns, rows} = board;
-  if (sample.corners.length !== columns * rows) return NO_TILT;
-  const at = (column: number, row: number) => sample.corners[row * columns + column];
-  const topLeft = at(0, 0);
-  const topRight = at(columns - 1, 0);
-  const bottomLeft = at(0, rows - 1);
-  const bottomRight = at(columns - 1, rows - 1);
-  if (!topLeft || !topRight || !bottomLeft || !bottomRight) return NO_TILT;
+  const at = new Map<number, CalibrationCorner>();
+  sample.ids.forEach((id, index) => {
+    const corner = sample.corners[index];
+    if (corner) at.set(id, corner);
+  });
+  if (at.size < 4) return NO_TILT;
+
+  // Steps along a row, grouped by which half of the board they sit in.
+  const acrossNear: number[] = [];
+  const acrossFar: number[] = [];
+  const downNear: number[] = [];
+  const downFar: number[] = [];
+  for (const [id, corner] of at) {
+    const column = id % columns;
+    const row = Math.floor(id / columns);
+    const right = column + 1 < columns ? at.get(id + 1) : undefined;
+    if (right) {
+      (row * 2 < rows - 1 ? acrossNear : acrossFar).push(distance(corner, right));
+    }
+    const below = row + 1 < rows ? at.get(id + columns) : undefined;
+    if (below) {
+      (column * 2 < columns - 1 ? downNear : downFar).push(distance(corner, below));
+    }
+  }
   return {
-    x: logRatio(distance(topLeft, topRight), distance(bottomLeft, bottomRight)),
-    y: logRatio(distance(topLeft, bottomLeft), distance(topRight, bottomRight))
+    x: logRatio(mean(acrossNear), mean(acrossFar)),
+    y: logRatio(mean(downNear), mean(downFar))
   };
 }
 
@@ -79,7 +100,14 @@ export function poseSpread(
   return Math.sqrt(squared);
 }
 
+function mean(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
 function logRatio(first: number, second: number): number {
+  // Zero when either half contributed nothing: a measure taken from one side
+  // of the board says nothing about how it was turned.
   if (!(first > 0) || !(second > 0)) return 0;
   return Math.log(first / second);
 }
