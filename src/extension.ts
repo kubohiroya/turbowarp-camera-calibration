@@ -1,7 +1,7 @@
 import {extensionConfig} from './config';
 import definitions from './block-definitions.json';
 import {CameraCalibrationController} from './calibration/controller.js';
-import {openCvBackendFactory} from './calibration/opencv-backend.js';
+import {openCvBackendFactory} from './calibration/worker-backend.js';
 import type {CalibrationBackendFactory} from './calibration/types.js';
 import {
   createRuntimeCapability,

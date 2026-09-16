@@ -12,16 +12,16 @@
  * in neither file's text and no amount of reading proves anything. The module
  * also does not finish initializing under Node. A browser is the only place
  * this question can be asked, so this is the only check that starts one.
+ *
+ * It asks vendor/opencv.js -- the build tools/opencv/build.sh produces -- which
+ * is the file the extension actually embeds.
  */
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
-import {createRequire} from 'node:module';
 import {chromium} from 'playwright';
 import {REQUIRED_OPENCV_SYMBOLS} from '../src/calibration/opencv-symbols.ts';
 
-const require = createRequire(import.meta.url);
-const openCvPath = require.resolve('@techstark/opencv-js');
-const openCv = await readFile(openCvPath);
+const openCv = await readFile(new URL('../vendor/opencv.js', import.meta.url));
 
 const page = `<!doctype html><meta charset="utf-8"><title>opencv</title><script src="/opencv.js"></script>`;
 
@@ -48,14 +48,20 @@ try {
   const report = await tab.evaluate(
     async ([functions, constructors, constants]) => {
       const global = globalThis as Record<string, unknown>;
-      // The module is a thenable until it is ready, and resolving it a second
-      // time never settles, so readiness is polled rather than awaited.
-      for (let attempt = 0; attempt < 120; attempt += 1) {
-        const module = global.cv as Record<string, unknown> | undefined;
-        if (module && typeof module.Mat === 'function') break;
-        await new Promise((wake) => setTimeout(wake, 500));
+      for (let attempt = 0; attempt < 120 && global.cv === undefined; attempt += 1) {
+        await new Promise((wake) => setTimeout(wake, 250));
       }
-      const cv = global.cv as Record<string, unknown> | undefined;
+      // The module is a thenable until the WebAssembly runtime is up, and
+      // calling `then` is what starts it. Polling for `Mat` to appear without
+      // ever calling it waits for something nobody asked to happen.
+      const loaded = global.cv as
+        | Record<string, unknown>
+        | (() => Promise<Record<string, unknown>>)
+        | undefined;
+      const cv =
+        typeof loaded === 'function'
+          ? await loaded()
+          : ((await loaded) as Record<string, unknown> | undefined);
       if (!cv) return {ready: false, missing: [], build: ''};
       const missing: string[] = [];
       for (const name of [...functions, ...constructors]) {

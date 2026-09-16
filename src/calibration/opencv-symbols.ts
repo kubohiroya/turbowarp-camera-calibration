@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 /**
+ * The single pinned production solver. The version is part of the identifier so
+ * that a project can record which build produced a profile.
+ *
+ * Named here rather than beside the solver so the main thread can report it
+ * without importing the module that carries OpenCV.
+ */
+export const OPENCV_BACKEND_NAME = 'opencv-js-wasm-4.12.0-charuco';
+
+/**
  * Everything this backend reaches for on the OpenCV module.
  *
  * Checked at load, because the alternative is what happened: the guard asked
@@ -15,7 +24,7 @@
 export const REQUIRED_OPENCV_SYMBOLS = {
   functions: [
     'getBuildInformation',
-    'imread',
+    'matFromImageData',
     'cvtColor',
     'Laplacian',
     'meanStdDev',

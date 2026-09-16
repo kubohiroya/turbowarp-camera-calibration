@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-camera-calibration",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A TurboWarp extension that calibrates a shared Camera Source camera and publishes its intrinsic calibration profile.",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "license": "MPL-2.0",
@@ -36,6 +36,7 @@
   "jsdelivr": "./dist/camera-calibration.js",
   "files": [
     "dist/",
+    "vendor/",
     "lib/",
     "docs/",
     "schemas/",
@@ -85,7 +86,7 @@
   },
   "dependencies": {
     "@kubohiroya/turbowarp-camera-source": "0.8.0",
-    "@techstark/opencv-js": "4.12.0-release.1"
+    "comlink": "4.4.2"
   },
   "sideEffects": [
     "src/index.ts",
