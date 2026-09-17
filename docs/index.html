@@ -14,47 +14,85 @@
 </head>
 <body>
   <h1>TurboWarp-Camera-Calibration</h1>
-  <p>Calibrate a camera shared through TurboWarp-Camera-Source and publish its intrinsic calibration profile.</p>
+  <p>Calibrate a camera shared through TurboWarp-Camera-Source against a ChArUco board, and publish its intrinsic calibration profile.</p>
 
-  <p><strong>Status:</strong> the calibration path ships behind a startup feature flag that defaults to OFF. With the flag OFF the extension publishes only the state reporter, which answers <code>idle</code>.</p>
+  <p>Every block is available as soon as the extension is loaded; there is nothing to switch on. The solver runs on a Web Worker and is created on first use, so loading the extension costs nothing until a calibration starts.</p>
 
   <h2>Requirements</h2>
   <ul>
     <li>TurboWarp Desktop, Web, or Packager.</li>
     <li><code>@kubohiroya/turbowarp-camera-source</code> loaded first. This extension never opens a camera itself.</li>
-    <li>A printed chessboard calibration target, flat and unglossy. The block arguments count <strong>inner corners</strong>, not printed squares: a 10&times;7 square board is <code>9</code> by <code>6</code>.</li>
+    <li>A ChArUco board, flat and unglossy: a chessboard with an ArUco marker inside each light square. The block arguments count <strong>inner corners</strong>, not printed squares: a 10&times;7 square board is <code>9</code> by <code>6</code>. Supported boards are 9&times;6, 7&times;5, and 5&times;4 inner corners; draw them with the package's <code>./runtime</code> helpers so the markers match.</li>
     <li>The extension must run without the sandbox.</li>
   </ul>
 
   <h2>Calibrating a camera</h2>
+  <p>The simplest way is to let the extension take the samples:</p>
   <pre><code>start shared camera [default]
-start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m max error [1.5] px
-repeat until &lt;camera [default] calibration sample count = 12&gt;
+start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m marker [0.018] m max error [1.5] px
+start automatic calibration capture for camera [default]
+repeat until &lt;not &lt;automatic capture running for camera [default]?&gt;&gt;
+  say (camera calibration guidance [default])
+if &lt;(camera calibration state [default]) = [solved]&gt; then
+  publish calibration profile for camera [default]</code></pre>
+  <p>Automatic capture looks at the frame every 250 ms and keeps a view only when it would be accepted. Once it has enough views it solves in the background, and it finishes the session when the error on views held back from the fit is within the limit. At 40 views it does not stop; the view most like the others makes room for the new one.</p>
+  <p>To take the samples by hand instead:</p>
+  <pre><code>start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m marker [0.018] m max error [1.5] px
+repeat until &lt;(camera [default] calibration sample count) = 12&gt;
   add calibration sample for camera [default]
 solve calibration for camera [default]
 publish calibration profile for camera [default]</code></pre>
   <p>Each shared camera has its own session, profile, and diagnostics. Cancelling one camera never stops another consumer of the same shared camera.</p>
 
+  <h3>Guiding the operator</h3>
+  <p>During automatic capture a frame that cannot be used is not an error. <code>camera calibration guidance</code> says what to do instead:</p>
+  <table>
+    <tr><th>Guidance</th><th>Meaning</th></tr>
+    <tr><td><code>show-the-board</code></td><td>Nothing is visible</td></tr>
+    <tr><td><code>wrong-board</code></td><td>Markers are visible but fewer than six corners of the selected board: another board, or the right one at an unreadable angle</td></tr>
+    <tr><td><code>hold-steadier</code></td><td>The view is blurred</td></tr>
+    <tr><td><code>move-or-tilt</code></td><td>The view is too much like one already kept</td></tr>
+    <tr><td><code>tilt-more</code></td><td>The kept views are not tilted enough to solve from</td></tr>
+    <tr><td><code>keep-going</code></td><td>The background solve cannot reproduce even its own samples yet</td></tr>
+    <tr><td><code>vary-more</code></td><td>It reproduces its own samples but not the held-back ones: the views are too alike</td></tr>
+    <tr><td><code>solving</code>, <code>complete</code></td><td>Working, or done</td></tr>
+  </table>
+  <p>The person holding the board is often not looking at the screen. Three reporters are meant for continuous cues such as sounds:</p>
+  <ul>
+    <li><code>camera calibration tilt direction</code>: <code>top-near</code>, <code>top-far</code>, <code>left-near</code>, or <code>right-near</code>, whichever direction the kept views reach least.</li>
+    <li><code>camera calibration novelty</code>: 0 to 1, how much the view in front of the camera would add. It is measured on tilt, so sliding the board does not raise it.</li>
+    <li><code>camera calibration progress</code>: 0 to 16, four gates of four steps &mdash; enough views to solve, enough tilt among them, enough to hold some back, and an answer that holds on the held-back views. It never goes down.</li>
+  </ul>
+
   <h3>Getting a usable result</h3>
   <table>
     <tr><th>Do this</th><th>Why</th></tr>
-    <tr><td>Capture at least 8 accepted samples, at most 40</td><td>Fewer views leave the distortion terms under-determined</td></tr>
-    <tr><td>Vary the board angle by roughly 20&deg;&ndash;45&deg; across samples</td><td>Views that are all fronto-parallel cannot separate focal length from distance</td></tr>
-    <tr><td>Vary the distance and fill different parts of the frame, including the corners</td><td>Distortion is strongest away from the image center</td></tr>
-    <tr><td>Keep the whole board inside the frame and in focus</td><td>A partially visible or blurred board is refused</td></tr>
-    <tr><td>Do not change resolution, camera device, mirroring, focus, or zoom during a session</td><td>The session is fixed to the resolution it started with</td></tr>
+    <tr><td>Solve by hand from at least 8 accepted samples; automatic capture collects 12 or more and holds about a fifth back</td><td>Fewer views leave the distortion terms under-determined, and a solve with nothing held back cannot be validated</td></tr>
+    <tr><td>Tilt the board roughly 20&deg;&ndash;45&deg; in different directions across samples</td><td>Views that are all fronto-parallel cannot separate focal length from distance. Sliding the board sideways does not help</td></tr>
+    <tr><td>Vary the distance and fill different parts of the frame, including the corners</td><td>Distortion is strongest away from the image center. The markers name the corners, so a board that runs off the frame still counts when at least six corners are visible</td></tr>
+    <tr><td>Keep the board in focus and hold it still for a moment</td><td>A blurred view is refused</td></tr>
+    <tr><td>Do not change resolution, camera device, mirroring, resize mode, focus, or zoom during a session</td><td>The session is fixed to the conditions it started with, and a change ends it with an error rather than a profile that does not fit the camera</td></tr>
+    <tr><td>Prefer a printed board or a display set to 1:1; avoid projectors</td><td>Keystone correction, oblique projection, and the projector's own lens distort the board in ways the reprojection error does not show</td></tr>
   </table>
-  <p>Verify a finished calibration against images that were not part of the solve. A low reprojection error on the calibration samples alone does not prove the result generalizes.</p>
+  <p>Compare the reprojection error with the hold-out error. A low error on the calibration samples alone does not prove the result generalizes; the two agreeing is the evidence that it does.</p>
 
   <h2>Blocks</h2>
   <table>
     <tr><th>Block</th><th>Type</th><th>Does</th></tr>
-    <tr><td><code>start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m max error [MAX_ERROR_PX] px</code></td><td>Command</td><td>Leases one shared camera and fixes its real capture resolution for a session</td></tr>
-    <tr><td><code>add calibration sample for camera [CAMERA_ID]</code></td><td>Command</td><td>Detects the complete board in the current frame and keeps it when quality and novelty pass</td></tr>
+    <tr><td><code>start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m max error [MAX_ERROR_PX] px</code></td><td>Command</td><td>Leases one shared camera and fixes its real capture resolution and conditions for a session</td></tr>
+    <tr><td><code>add calibration sample for camera [CAMERA_ID]</code></td><td>Command</td><td>Detects the board in the current frame and keeps it when quality and novelty pass</td></tr>
+    <tr><td><code>start automatic calibration capture for camera [CAMERA_ID]</code></td><td>Command</td><td>Hands the shutter to the extension, which also solves and finishes the session</td></tr>
+    <tr><td><code>stop automatic calibration capture for camera [CAMERA_ID]</code></td><td>Command</td><td>Hands the shutter back; the session and its samples stay</td></tr>
+    <tr><td><code>automatic capture running for camera [CAMERA_ID]?</code></td><td>Boolean</td><td>Whether the shutter is still watching that camera</td></tr>
+    <tr><td><code>camera calibration guidance [CAMERA_ID]</code></td><td>Reporter</td><td>What the operator should do next</td></tr>
+    <tr><td><code>camera calibration novelty [CAMERA_ID]</code></td><td>Reporter</td><td>How much the current view would add, 0 to 1</td></tr>
+    <tr><td><code>camera calibration tilt direction [CAMERA_ID]</code></td><td>Reporter</td><td>Which way to turn the board next</td></tr>
+    <tr><td><code>camera calibration progress [CAMERA_ID]</code></td><td>Reporter</td><td>How far the session has come, 0 to 16</td></tr>
     <tr><td><code>solve calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Solves the intrinsics from at least eight samples and releases the lease</td></tr>
     <tr><td><code>cancel calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Releases the lease and the samples, keeping the last validated profile</td></tr>
     <tr><td><code>cleanup calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Also clears the in-memory profile for that camera</td></tr>
     <tr><td><code>publish calibration profile for camera [CAMERA_ID]</code></td><td>Command</td><td>Registers the profile with Camera Source, which owns the contract</td></tr>
+    <tr><td><code>measure camera [CAMERA_ID] board pose board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m scale [SCALE_SOURCE]</code></td><td>Command</td><td>Measures where a board that has stopped moving is, in the calibrated camera's frame</td></tr>
     <tr><td><code>import calibration profile [JSON] for camera [CAMERA_ID]</code></td><td>Command</td><td>Imports a profile after schema, credential, and applicability checks</td></tr>
     <tr><td><code>calibration profile [JSON] valid for camera [CAMERA_ID]?</code></td><td>Boolean</td><td>Validates a profile without replacing the stored one</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration ready?</code></td><td>Boolean</td><td>Whether the session can accept a sample or a solve</td></tr>
@@ -63,9 +101,13 @@ publish calibration profile for camera [default]</code></pre>
     <tr><td><code>camera [CAMERA_ID] calibration sample count</code></td><td>Reporter</td><td>Accepted samples in the current or last solved session</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration sample quality</code></td><td>Reporter</td><td>The latest accepted sample's score, from zero to one</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration reprojection error px</code></td><td>Reporter</td><td>RMS reprojection error of the latest solve or imported profile</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration pose spread</code></td><td>Reporter</td><td>How varied the angles of the samples are; zero cannot be solved from</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration holdout error px</code></td><td>Reporter</td><td>RMS reprojection error over the samples the solve was not fitted to</td></tr>
+    <tr><td><code>camera [CAMERA_ID] calibration holdout sample count</code></td><td>Reporter</td><td>How many samples were held back; zero means nothing was validated</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration error code</code></td><td>Reporter</td><td>A stable code, or an empty string</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration error</code></td><td>Reporter</td><td>The detailed diagnostic</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration profile JSON</code></td><td>Reporter</td><td>The stored intrinsic profile, or an empty string</td></tr>
+    <tr><td><code>camera [CAMERA_ID] board pose JSON</code></td><td>Reporter</td><td>The last measured board pose, or an empty string</td></tr>
   </table>
 
   <h2>Error codes</h2>
@@ -73,46 +115,53 @@ publish calibration profile for camera [default]</code></pre>
     <tr><th>Code</th><th>Meaning</th></tr>
     <tr><td><code>dependency-missing</code></td><td>Camera Source is not loaded</td></tr>
     <tr><td><code>api-version-mismatch</code></td><td>Camera Source has no profile registry, or speaks another contract version</td></tr>
-    <tr><td><code>invalid-board</code></td><td>The board size, square size, or error limit is out of range</td></tr>
+    <tr><td><code>invalid-board</code></td><td>The board size, square or marker size, or error limit is out of range</td></tr>
     <tr><td><code>camera-unavailable</code></td><td>Camera Source refused the lease</td></tr>
     <tr><td><code>camera-ended</code></td><td>The camera stopped or the device disappeared</td></tr>
     <tr><td><code>resolution-mismatch</code></td><td>The capture resolution changed after the session started</td></tr>
     <tr><td><code>capture-condition-mismatch</code></td><td>The camera device or mirroring changed after the session started, or its resize mode, zoom or focus changed before the solve. The session ends in an error rather than solved.</td></tr>
-    <tr><td><code>board-not-found</code></td><td>The complete chessboard was not visible</td></tr>
+    <tr><td><code>board-not-found</code></td><td>No markers and fewer than six corners of the board were visible</td></tr>
+    <tr><td><code>wrong-board</code></td><td>Markers were visible but formed fewer than six corners of the selected board</td></tr>
     <tr><td><code>sample-low-quality</code></td><td>The board was too small in frame, or too blurred</td></tr>
     <tr><td><code>sample-too-similar</code></td><td>The view is too close to one already kept</td></tr>
-    <tr><td><code>sample-limit</code></td><td>Forty samples are already retained</td></tr>
+    <tr><td><code>sample-limit</code></td><td>Forty samples are already retained (by hand only; automatic capture replaces one instead)</td></tr>
     <tr><td><code>sample-insufficient</code></td><td>Fewer than eight samples have been accepted</td></tr>
+    <tr><td><code>sample-poses-degenerate</code></td><td>The samples were never tilted enough to separate focal length from distance</td></tr>
     <tr><td><code>sample-failed</code>, <code>solve-failed</code></td><td>The solver itself failed</td></tr>
     <tr><td><code>reprojection-too-high</code></td><td>The solve exceeded the session's error limit</td></tr>
     <tr><td><code>invalid-calibration</code></td><td>The profile does not match the schema</td></tr>
     <tr><td><code>credential-forbidden</code></td><td>The profile carries a pairing credential</td></tr>
     <tr><td><code>calibration-not-applicable</code></td><td>The profile belongs to another camera or another capture size</td></tr>
-    <tr><td><code>not-calibrated</code></td><td>There is no profile to publish</td></tr>
-    <tr><td colspan="2">A refused publication records its code without changing the calibration state: a solved profile stays solved.</td></tr>
+    <tr><td><code>not-calibrated</code></td><td>There is no profile to publish, or to measure a board pose with</td></tr>
+    <tr><td><code>board-pose-unavailable</code></td><td>Too little of the board was in view to measure its pose</td></tr>
     <tr><td><code>publish-failed</code></td><td>Camera Source rejected the profile</td></tr>
+    <tr><td colspan="2">A refused publication records its code without changing the calibration state: a solved profile stays solved.</td></tr>
   </table>
 
   <h2>The calibration profile</h2>
-  <p>The profile is intrinsics only: an intrinsic matrix, a distortion model and its coefficients, the calibrated image size, and when it was measured. It never carries a world pose, and a pose that was not measured is never filled in with identity. Preview mirroring is a display concern; profile coordinates are always the unmirrored capture coordinates.</p>
+  <p>The profile is intrinsics only: an intrinsic matrix, a distortion model and its coefficients, the calibrated image size, its quality, and when it was measured. It also records the capture conditions the camera reported when the session started (resize mode, zoom, focus mode and distance, frame rate, facing mode) and the camera's own name, so Camera Source can later answer whether the profile fits the camera in front of it. A value the camera did not report is left out rather than guessed.</p>
+  <p>It never carries a world pose, and a pose that was not measured is never filled in with identity. Preview mirroring is a display concern; profile coordinates are always the unmirrored capture coordinates.</p>
   <p>Profiles written by <code>@kubohiroya/turbowarp-realtime-motion-capture</code> are accepted on import; their world pose is dropped rather than reinterpreted.</p>
+
+  <h2>Board pose</h2>
+  <p>A calibration needs the board to move, so where a board sits is measured separately, after calibration, once the board has stopped. The result is the board in the camera's frame, never a world pose. Its scale comes from the declared square size, so the block asks whether that size was <code>measured</code> with a ruler or is <code>nominal</code>, and records the answer. The observed corners are kept with it so a placement tool can re-solve the measurement into a shared frame.</p>
 
   <h2>How the packages divide the work</h2>
   <table>
     <tr><th>Package</th><th>Owns</th></tr>
     <tr>
       <td><code>@kubohiroya/turbowarp-camera-source</code></td>
-      <td>Camera acquisition, lease sharing, preview, and the calibration profile contract</td>
+      <td>Camera acquisition, lease sharing, preview, capture conditions, and the calibration profile contract</td>
     </tr>
     <tr>
       <td><code>@kubohiroya/turbowarp-camera-calibration</code></td>
-      <td>The calibration procedure: chessboard sampling, solving, and profile publication</td>
+      <td>The calibration procedure: board drawing and detection, manual and automatic sampling, solving and hold-out validation, board pose measurement, and profile publication</td>
     </tr>
   </table>
-  <p>The OpenCV build needed to solve a calibration is roughly 10 MB, and a TurboWarp extension ships as a single standalone bundle. Keeping the solver in its own extension lets Camera Source stay small enough for every camera consumer to load.</p>
+  <p>Detecting a ChArUco board and solving a calibration needs OpenCV, and a TurboWarp extension ships as a single standalone bundle. Keeping the solver in its own extension lets Camera Source stay small enough for every camera consumer to load. The OpenCV inside is built for this extension to run in a Web Worker and to carry only the functions it calls; the whole extension is about 3.9 MB.</p>
 
   <h2>Safety</h2>
-  <p>Calibration reads camera frames only to detect the chessboard target. Nothing is uploaded. A profile that carries a pairing credential is rejected rather than stored. Load unsandboxed extension code only from a source you trust.</p>
+  <p>Calibration reads camera frames only to detect the board. Nothing is uploaded. A profile that carries a pairing credential is rejected rather than stored. Load unsandboxed extension code only from a source you trust.</p>
 
   <h2>Development</h2>
   <p>See the repository README and architecture documentation for build, test, release, and compatibility details.</p>
