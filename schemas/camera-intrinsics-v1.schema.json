@@ -20,22 +20,51 @@
     "calibratedAt"
   ],
   "properties": {
-    "schema": {"const": "camerasource/camera-intrinsics"},
-    "version": {"const": 1},
-    "calibrationId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
-    "cameraId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
-    "cameraModel": {"enum": ["pinhole"]},
-    "imageWidth": {"type": "integer", "minimum": 1, "maximum": 16384},
-    "imageHeight": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "schema": {
+      "const": "camerasource/camera-intrinsics"
+    },
+    "version": {
+      "const": 1
+    },
+    "calibrationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "cameraId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "cameraModel": {
+      "enum": [
+        "pinhole"
+      ]
+    },
+    "imageWidth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16384
+    },
+    "imageHeight": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16384
+    },
     "imageState": {
-      "enum": ["raw", "undistorted"],
+      "enum": [
+        "raw",
+        "undistorted"
+      ],
       "description": "raw means the coefficients still have to be applied; undistorted means the image is already corrected and they must not be applied again."
     },
     "intrinsicMatrix": {
       "type": "array",
       "minItems": 9,
       "maxItems": 9,
-      "items": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+      "items": {
+        "type": "number",
+        "minimum": -1000000,
+        "maximum": 1000000
+      },
       "description": "Row-major zero-skew pinhole matrix [fx, 0, cx, 0, fy, cy, 0, 0, 1] in pixels of the calibrated image size."
     },
     "distortionModel": {
@@ -51,18 +80,75 @@
       "type": "array",
       "minItems": 0,
       "maxItems": 14,
-      "items": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+      "items": {
+        "type": "number",
+        "minimum": -1000000,
+        "maximum": 1000000
+      },
       "description": "Coefficients in OpenCV order. The count must match distortionModel: 0, 4 or 5, 8, 12, or 14."
     },
     "quality": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sampleCount", "reprojectionErrorPx"],
+      "required": [
+        "sampleCount",
+        "reprojectionErrorPx"
+      ],
       "properties": {
-        "sampleCount": {"type": "integer", "minimum": 0},
-        "reprojectionErrorPx": {"type": "number", "minimum": 0, "maximum": 1000000}
+        "sampleCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reprojectionErrorPx": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        }
       },
       "description": "Absent when the producer of the profile did not measure it."
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resizeMode": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "zoom": {
+          "type": "number"
+        },
+        "focusMode": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "focusDistance": {
+          "type": "number"
+        },
+        "frameRate": {
+          "type": "number"
+        },
+        "facingMode": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "description": "How the camera was configured when the views were taken, as the camera reported it. A member the camera did not report is left out. Without this record a profile can never be judged compatible with any camera, including the one it was solved on."
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "deviceId": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "description": "What the camera called itself. A hint for matching, never proof of identity."
     },
     "calibratedAt": {
       "type": "string",

@@ -1,6 +1,7 @@
 import {
   CALIBRATION_LEASE_OWNER,
   CameraSourceError,
+  captureConditionsOf,
   requireCameraSource,
   requireProfileRegistry,
   toCameraSourceProfile,
@@ -151,6 +152,14 @@ interface CalibrationSession {
   readonly imageHeight: number;
   readonly deviceId: string;
   readonly previewFlip: string;
+  /**
+   * The camera's configuration when the session began.
+   *
+   * Read at the start rather than at the solve: the views were taken under
+   * these settings, and a setting changed mid-session would be recorded as the
+   * one that produced them otherwise.
+   */
+  readonly conditions?: ReturnType<typeof captureConditionsOf>;
 }
 
 /**
@@ -253,7 +262,8 @@ class CameraCalibration {
       imageWidth: frame.width,
       imageHeight: frame.height,
       deviceId: frame.deviceId,
-      previewFlip: frame.previewFlip
+      previewFlip: frame.previewFlip,
+      conditions: captureConditionsOf(this.runtime, normalized.cameraId)
     };
     this.lease = lease;
     this.samples = [];
@@ -1075,6 +1085,9 @@ class CameraCalibration {
         distortionModel: solution.distortionModel,
         distortionCoefficients: solution.distortionCoefficients,
         quality: {sampleCount, reprojectionErrorPx: solution.reprojectionErrorPx},
+        ...(session.conditions
+          ? {capture: session.conditions.capture, device: session.conditions.device}
+          : {}),
         calibratedAt: new Date(this.nowMilliseconds()).toISOString()
       });
     } catch (error) {
