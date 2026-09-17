@@ -3,6 +3,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {CameraCalibrationController} from '../src/calibration/controller.js';
 import type {
   CalibrationBackendPort,
+  CalibrationDetection,
   CalibrationSample,
   CalibrationSolveResult
 } from '../src/calibration/types.js';
@@ -33,7 +34,10 @@ function setup(schedule?: (callback: () => void, delayMs: number) => () => void)
   const lease: CameraLease = {getFrameSource: vi.fn(() => frame), release};
   let sampleIndex = 0;
   const captureSample = vi.fn(
-    async (): Promise<CalibrationSample | undefined> => sample(sampleIndex++)
+    async (): Promise<CalibrationDetection> => ({
+      sample: sample(sampleIndex++),
+      markersSeen: 35
+    })
   );
   // What the solve was actually given, so a test can see the split without
   // reaching into the mock's call records.
@@ -188,19 +192,22 @@ describe('CameraCalibrationController', () => {
     expect(() => insufficient.controller.solve('camera-1')).toThrow(/sample-insufficient/u);
 
     const missing = setup();
-    missing.captureSample.mockResolvedValue(undefined);
+    missing.captureSample.mockResolvedValue({markersSeen: 0});
     await missing.controller.start(startOptions);
     await expect(missing.controller.addSample('camera-1')).rejects.toThrow(/board-not-found/u);
 
     const lowQuality = setup();
-    lowQuality.captureSample.mockResolvedValue({...sample(0), quality: 0.1});
+    lowQuality.captureSample.mockResolvedValue({
+      sample: {...sample(0), quality: 0.1},
+      markersSeen: 35
+    });
     await lowQuality.controller.start(startOptions);
     await expect(lowQuality.controller.addSample('camera-1')).rejects.toThrow(
       /sample-low-quality/u
     );
 
     const duplicate = setup();
-    duplicate.captureSample.mockResolvedValue(sample(0));
+    duplicate.captureSample.mockResolvedValue({sample: sample(0), markersSeen: 35});
     await duplicate.controller.start(startOptions);
     await duplicate.controller.addSample('camera-1');
     await expect(duplicate.controller.addSample('camera-1')).rejects.toThrow(
@@ -243,10 +250,10 @@ describe('CameraCalibrationController', () => {
 
   it('coalesces sampling and releases the lease while cancelling', async () => {
     const {controller, captureSample, release} = setup();
-    let finish: ((value: CalibrationSample) => void) | undefined;
+    let finish: ((value: CalibrationDetection) => void) | undefined;
     captureSample.mockImplementation(
       () =>
-        new Promise<CalibrationSample>((resolve) => {
+        new Promise<CalibrationDetection>((resolve) => {
           finish = resolve;
         })
     );
@@ -256,7 +263,7 @@ describe('CameraCalibrationController', () => {
     expect(first).toBe(second);
     await flushMicrotasks();
     expect(captureSample).toHaveBeenCalledOnce();
-    finish?.(sample(0));
+    finish?.({sample: sample(0), markersSeen: 35});
     await first;
     await controller.cancel('camera-1');
     expect(release).toHaveBeenCalledOnce();
@@ -522,14 +529,17 @@ describe('CameraCalibrationController', () => {
     captureSample.mockImplementation(async () => {
       const index = slid++;
       return {
-        corners: Array.from({length: 54}, (_, corner) => ({
-          x: 200 + (corner % 9) * 40 + index * 25,
-          y: 150 + Math.floor(corner / 9) * 40 + index * 15
-        })),
-        ids: Array.from({length: 54}, (_, corner) => corner),
-        quality: 0.8,
-        coverage: 0.25,
-        sharpness: 120
+        sample: {
+          corners: Array.from({length: 54}, (_, corner) => ({
+            x: 200 + (corner % 9) * 40 + index * 25,
+            y: 150 + Math.floor(corner / 9) * 40 + index * 15
+          })),
+          ids: Array.from({length: 54}, (_, corner) => corner),
+          quality: 0.8,
+          coverage: 0.25,
+          sharpness: 120
+        },
+        markersSeen: 35
       };
     });
     await controller.start(startOptions);

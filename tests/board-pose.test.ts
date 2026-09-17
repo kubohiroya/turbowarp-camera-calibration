@@ -3,7 +3,6 @@ import {CameraCalibrationController} from '../src/calibration/controller.js';
 import type {
   BoardPoseSolution,
   CalibrationBackendPort,
-  CalibrationSample,
   CalibrationSolveResult
 } from '../src/calibration/types.js';
 
@@ -26,7 +25,7 @@ function setup(pose: BoardPoseSolution | null = samplePose()) {
   const measurePose = vi.fn(async () => pose ?? undefined);
   const backend: CalibrationBackendPort = {
     name: 'mock-calibration-backend',
-    captureSample: vi.fn(async (): Promise<CalibrationSample | undefined> => undefined),
+    captureSample: vi.fn(async () => ({markersSeen: 0})),
     solve: vi.fn(async (): Promise<CalibrationSolveResult> => {
       throw new Error('not used');
     }),

@@ -5,7 +5,7 @@ import {
   IDLE_CALIBRATION_STATE,
   type CameraCalibrationExtensionOptions
 } from '../src/extension.js';
-import type {CalibrationBackendPort, CalibrationSample} from '../src/calibration/types.js';
+import type {CalibrationBackendPort} from '../src/calibration/types.js';
 import type {CameraFrameSource, CameraLease} from '../src/calibration/camera-source.js';
 import {
   readCameraCalibrationCapability,
@@ -31,7 +31,7 @@ function setup(options: Partial<CameraCalibrationExtensionOptions> = {}) {
   const lease: CameraLease = {getFrameSource: () => frame, release};
   const backend: CalibrationBackendPort = {
     name: 'mock-calibration-backend',
-    captureSample: vi.fn(async (): Promise<CalibrationSample | undefined> => undefined),
+    captureSample: vi.fn(async () => ({markersSeen: 0})),
     solve: vi.fn(async () => {
       throw new Error('not used');
     }),

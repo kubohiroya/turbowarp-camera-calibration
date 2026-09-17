@@ -29,6 +29,7 @@ export type CalibrationErrorCode =
   | 'resolution-mismatch'
   | 'capture-condition-mismatch'
   | 'board-not-found'
+  | 'wrong-board'
   | 'sample-low-quality'
   | 'sample-too-similar'
   | 'sample-limit'
@@ -60,6 +61,14 @@ export type CalibrationGuidance =
   | ''
   /** Nothing recognisable in the frame. */
   | 'show-the-board'
+  /**
+   * Markers are in frame, and they do not make the board being calibrated.
+   *
+   * Almost always one of the other boards. It can also be the right board at
+   * an angle nothing can be read from, which is why this says what was seen
+   * rather than accusing the operator of holding the wrong thing.
+   */
+  | 'wrong-board'
   /** Found, but blurred or too small to trust the corners of. */
   | 'hold-steadier'
   /** A view too close to one already collected to add anything. */
@@ -75,10 +84,16 @@ export type CalibrationGuidance =
   | 'tilt-more'
   /** Collecting; nothing is wrong. */
   | 'keep-going'
+  /**
+   * The answer so far does not hold up on views it was not fitted to.
+   *
+   * Distinct from `keep-going`, which is only ever "not enough yet". This one
+   * says the views collected are too alike to support an answer: the remedy is
+   * a wider range of distances and angles, not more of the same.
+   */
+  | 'vary-more'
   /** A solve is running on the views collected so far. */
   | 'solving'
-  /** The shutter stopped at the sample limit without reaching an answer. */
-  | 'limit-reached'
   /** Solved and validated. Nothing further is needed. */
   | 'complete';
 

@@ -89,7 +89,7 @@
       "opcode": "cameraCalibrationGuidance",
       "blockType": "REPORTER",
       "text": "camera calibration guidance [CAMERA_ID]",
-      "description": "Returns what the operator should do next while automatic capture runs: show-the-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions.",
+      "description": "Returns what the operator should do next while automatic capture runs: show-the-board, wrong-board, hold-steadier, move-or-tilt, tilt-more, keep-going, vary-more, solving, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions. wrong-board means markers are in frame that do not make the board being calibrated. vary-more means the answer reproduces the views it was fitted to and not the ones it was not, which more of the same views cannot fix.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",

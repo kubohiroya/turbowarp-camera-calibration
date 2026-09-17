@@ -17,6 +17,7 @@ import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
   CalibrationBoard,
+  CalibrationDetection,
   CalibrationFrame,
   CalibrationSample,
   CalibrationSolveResult
@@ -32,7 +33,7 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
   public async captureSample(
     frame: CalibrationFrame,
     board: CalibrationBoard
-  ): Promise<CalibrationSample | undefined> {
+  ): Promise<CalibrationDetection> {
     const pixels = this.readFrame(frame);
     // The buffer is handed over rather than copied. Nothing here reads it
     // again, and a frame is megabytes: copying one per sample is a cost paid

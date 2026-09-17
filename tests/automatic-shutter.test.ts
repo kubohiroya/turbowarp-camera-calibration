@@ -85,6 +85,8 @@ function manualScheduler() {
 interface Options {
   /** What the detector finds, by frame number. Undefined means nothing found. */
   readonly detect?: (index: number) => CalibrationSample | undefined;
+  /** Markers reported when no board came out of the frame. */
+  readonly markersSeen?: number;
   readonly holdoutError?: number;
   readonly reprojectionErrorPx?: number;
 }
@@ -102,7 +104,12 @@ function setup(options: Options = {}) {
   const lease: CameraLease = {getFrameSource: vi.fn(() => frame), release};
   let frameIndex = 0;
   const detect = options.detect ?? ((index: number) => sample(index));
-  const captureSample = vi.fn(async () => detect(frameIndex++));
+  const captureSample = vi.fn(async () => {
+    const sample = detect(frameIndex++);
+    // Markers only when a board came out of it, unless a test says otherwise:
+    // these fixtures stand for an empty frame, not for another board.
+    return {sample, markersSeen: sample ? 35 : (options.markersSeen ?? 0)};
+  });
   const solve = vi.fn(
     async (): Promise<CalibrationSolveResult> => ({
       intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
@@ -184,6 +191,25 @@ describe('the automatic shutter', () => {
     expect(controller.state(CAMERA)).toBe('ready');
   });
 
+  it('says the board is the wrong one, rather than asking for a board', async () => {
+    // All three boards draw markers from one dictionary numbered from zero, so
+    // holding the wrong sheet puts plenty of valid markers in frame and
+    // produces no corners at all -- the same nothing as an empty frame. Told
+    // to show the board while holding one, an operator has no reason to think
+    // anything but that the camera is broken.
+    const {controller, clock} = await started({detect: () => undefined, markersSeen: 24});
+    await clock.run(2);
+    expect(controller.guidance(CAMERA)).toBe('wrong-board');
+    expect(controller.errorCode(CAMERA)).toBe('');
+    expect(controller.sampleCount(CAMERA)).toBe(0);
+  });
+
+  it('still asks for a board when the frame holds nothing at all', async () => {
+    const {controller, clock} = await started({detect: () => undefined, markersSeen: 0});
+    await clock.run(2);
+    expect(controller.guidance(CAMERA)).toBe('show-the-board');
+  });
+
   it('tells the operator to hold still when the view is found but poor', async () => {
     const {controller, clock} = await started({
       detect: (index) => ({...sample(index), quality: 0.01})
@@ -225,17 +251,37 @@ describe('the automatic shutter', () => {
     expect(clock.waiting()).toBe(0);
   });
 
-  it('will not finish on the fit error alone', async () => {
+  it('will not finish on the fit error alone, and says which number failed', async () => {
     // An overfitted answer reproduces the views it was made from. Held-out
     // views are what say whether it predicts anything else, and a session that
     // ended on the fit error would end exactly when the set was too small.
+    //
+    // The guidance separates the two failures because they ask for different
+    // things: a fit that cannot reproduce its own views wants more views, and
+    // one that reproduces its own and nothing else wants different ones. The
+    // second is the case here, and telling the operator to carry on would be
+    // telling them to do the thing that is not working.
     const {controller, clock, solve} = await started({holdoutError: 9});
     await clock.run(16);
     expect(solve).toHaveBeenCalled();
     expect(controller.state(CAMERA)).toBe('ready');
     expect(controller.automatic(CAMERA)).toBe(true);
-    expect(controller.guidance(CAMERA)).toBe('keep-going');
+    expect(controller.guidance(CAMERA)).toBe('vary-more');
     expect(controller.latestHoldoutError(CAMERA)).toBe(9);
+  });
+
+  it('keeps watching at the sample limit, making room instead of stopping', async () => {
+    // A shutter that stops because it has looked forty times gives up on an
+    // operator who is still holding the board -- and the set it leaves behind
+    // is the one it already could not solve from. The next tilted view is
+    // worth more than the dullest of the forty.
+    const {controller, clock} = await started({holdoutError: 9});
+    await clock.run(120);
+    expect(controller.sampleCount(CAMERA)).toBe(40);
+    expect(controller.automatic(CAMERA)).toBe(true);
+    expect(controller.errorCode(CAMERA)).toBe('');
+    // Nothing anywhere says the shutter gave up, because it did not.
+    expect(controller.guidance(CAMERA)).not.toBe('limit-reached');
   });
 
   it('holds the answer against views it was not fitted to', async () => {
@@ -273,5 +319,15 @@ describe('the automatic shutter', () => {
     await controller.start(startOptions);
     await expect(controller.addSample(CAMERA)).rejects.toThrowError(/board-not-found/u);
     expect(controller.errorCode(CAMERA)).toBe('board-not-found');
+  });
+
+  it('names the wrong board in the refusal a person asked for', async () => {
+    const {controller} = setup({detect: () => undefined, markersSeen: 24});
+    await controller.start(startOptions);
+    await expect(controller.addSample(CAMERA)).rejects.toThrowError(/wrong-board/u);
+    expect(controller.errorCode(CAMERA)).toBe('wrong-board');
+    // The board it was looking for, so the operator knows which sheet to find.
+    expect(controller.errorMessage(CAMERA)).toContain('9x6');
+    expect(controller.errorMessage(CAMERA)).toContain('24 markers');
   });
 });
