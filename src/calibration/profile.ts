@@ -1,3 +1,8 @@
+import {
+  readCameraProfileDocument,
+  readProfileText,
+  type CameraIntrinsicProfileV1 as CameraSourceProfile
+} from '@kubohiroya/turbowarp-camera-source/profile';
 import {DISTORTION_COEFFICIENT_COUNTS, type DistortionModel} from './types.js';
 
 /**
@@ -20,6 +25,9 @@ export const CAMERA_INTRINSICS_VERSION = 1;
 
 /** The pre-migration profile, which mixed intrinsics with a world pose. */
 export const LEGACY_CALIBRATION_SCHEMA_ID = 'twrmc/camera-calibration';
+
+/** The contract Camera Source owns and renders; read through Camera Source's reader. */
+export const CAMERA_SOURCE_PROFILE_SCHEMA_ID = 'twcs/camera-intrinsics';
 
 export type CameraModel = 'pinhole';
 
@@ -139,11 +147,19 @@ const CREDENTIAL_KEY =
  * caller may replace state only once this resolves.
  */
 export function parseCalibrationProfile(json: string): CameraIntrinsicsV1 {
+  const trimmed = json.trim();
+  // A calibration file is Camera Source's to read: a ROS camera_info YAML
+  // document, or the twcs/camera-intrinsics JSON Camera Source renders. Only
+  // JSON in this extension's own shape, or the legacy one, is read here.
+  if (!trimmed.startsWith('{')) return readCameraSourceProfileText(trimmed);
   let value: unknown;
   try {
-    value = JSON.parse(json);
+    value = JSON.parse(trimmed);
   } catch (error) {
     throw new CalibrationProfileError('invalid-calibration', String(error));
+  }
+  if (isRecord(value) && value.schema === CAMERA_SOURCE_PROFILE_SCHEMA_ID) {
+    return readCameraSourceProfileText(trimmed);
   }
   const credentialPath = findPairingCredential(value);
   if (credentialPath) {
@@ -157,6 +173,66 @@ export function parseCalibrationProfile(json: string): CameraIntrinsicsV1 {
     return parseLegacyProfile(record);
   }
   return parseIntrinsicsProfile(record);
+}
+
+/**
+ * Reads a calibration in the form it leaves a PC in, through Camera Source's
+ * own reader, and holds it in this extension's shape.
+ *
+ * The rules come from `@kubohiroya/turbowarp-camera-source/profile` rather
+ * than a copy: a file Camera Source accepts is accepted here for the same
+ * reasons, and refused for the same reasons. The result is then checked again
+ * as this extension's profile, so a calibration Camera Source can describe and
+ * this extension cannot -- a fisheye lens -- is refused rather than relabelled.
+ */
+function readCameraSourceProfileText(text: string): CameraIntrinsicsV1 {
+  const read = readProfileText(text);
+  const result = read.ok ? readCameraProfileDocument(read.document) : read;
+  if (!result.ok) {
+    const {code, path, message} = result.error;
+    throw new CalibrationProfileError(
+      code === 'forbidden-field' ? 'credential-forbidden' : 'invalid-calibration',
+      path ? `${path}: ${message}` : message
+    );
+  }
+  return assertCameraIntrinsics(fromCameraSourceProfile(result.profile));
+}
+
+/** The inverse of the conversion made on publishing to Camera Source. */
+function fromCameraSourceProfile(profile: CameraSourceProfile): CameraIntrinsicsV1 {
+  const {fx, fy, cx, cy, skew} = profile.intrinsics;
+  const {model, coefficients} = profile.distortion;
+  let distortionModel: DistortionModel;
+  if (model === 'none') distortionModel = 'none';
+  else if (model === 'brown-conrady') {
+    distortionModel = coefficients.length === 8 ? 'opencv-rational' : 'opencv-plumb-bob';
+  } else {
+    throw new CalibrationProfileError(
+      'invalid-calibration',
+      `This extension has no distortion model matching ${model}, so the profile cannot be imported.`
+    );
+  }
+  return {
+    schema: CAMERA_INTRINSICS_SCHEMA_ID,
+    version: CAMERA_INTRINSICS_VERSION,
+    calibrationId: profile.profileId,
+    cameraId: profile.cameraId,
+    cameraModel: profile.cameraModel,
+    imageWidth: profile.image.width,
+    imageHeight: profile.image.height,
+    imageState: profile.image.undistorted ? 'undistorted' : 'raw',
+    intrinsicMatrix: [fx, skew, cx, 0, fy, cy, 0, 0, 1],
+    distortionModel,
+    distortionCoefficients: [...coefficients],
+    ...(profile.quality ? {quality: {...profile.quality}} : {}),
+    ...(profile.capture ? {capture: {...profile.capture}} : {}),
+    ...(profile.device ? {device: {...profile.device}} : {}),
+    calibratedAt: profile.calibratedAt
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Validates a value this extension just produced, before it becomes state. */

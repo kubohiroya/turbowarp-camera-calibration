@@ -217,7 +217,7 @@
       "opcode": "importCameraCalibration",
       "blockType": "COMMAND",
       "text": "import calibration profile [JSON] for camera [CAMERA_ID]",
-      "description": "Imports a calibration profile after schema, credential, and applicability checks. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.",
+      "description": "Imports a calibration profile after schema, credential, and applicability checks. Accepts a calibration file as Camera Source writes it -- ROS camera_info YAML, or twcs/camera-intrinsics JSON -- read through Camera Source's own reader, as well as this extension's profile JSON. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.",
       "arguments": {
         "JSON": {
           "type": "STRING",
@@ -376,7 +376,7 @@
       "opcode": "cameraCalibrationJson",
       "blockType": "REPORTER",
       "text": "camera [CAMERA_ID] calibration profile JSON",
-      "description": "Exports the stored intrinsic profile for that camera, or an empty string when none exists.",
+      "description": "Returns the stored intrinsic profile in this extension's own JSON shape, or an empty string when none exists. To write a calibration to a file or a QR code, publish it and use Camera Source's camera profile YAML, which other tools read.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",
