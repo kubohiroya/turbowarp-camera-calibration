@@ -120,9 +120,10 @@ function setup(options: Options = {}) {
       reprojectionErrorPx: options.reprojectionErrorPx ?? 0.75
     })
   );
-  const validate = vi.fn(async (held: readonly CalibrationSample[]) =>
-    held.length === 0 ? 0 : (options.holdoutError ?? 0.6)
-  );
+  const validate = vi.fn(async (held: readonly CalibrationSample[]) => ({
+    reprojectionErrorPx: held.length === 0 ? 0 : (options.holdoutError ?? 0.6),
+    sampleCount: held.length
+  }));
   const backend: CalibrationBackendPort = {
     name: 'mock-calibration-backend',
     captureSample,
@@ -459,6 +460,16 @@ describe('the automatic shutter', () => {
     focusMode = 'manual';
     open?.();
     await expect(asked).rejects.toThrow(/capture-condition-mismatch/u);
+  });
+
+  it('does not finish on held-out views none of which could be scored', async () => {
+    const {controller, clock, solve, validate} = await started();
+    validate.mockResolvedValue({reprojectionErrorPx: 0, sampleCount: 0});
+    await clock.run(16);
+    expect(solve).toHaveBeenCalled();
+    expect(controller.state(CAMERA)).toBe('ready');
+    expect(controller.automatic(CAMERA)).toBe(true);
+    expect(controller.holdoutSampleCount(CAMERA)).toBe(0);
   });
 
   it('holds the answer against views it was not fitted to', async () => {

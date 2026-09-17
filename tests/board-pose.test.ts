@@ -32,7 +32,7 @@ function setup(
     solve: vi.fn(async (): Promise<CalibrationSolveResult> => {
       throw new Error('not used');
     }),
-    validate: vi.fn(async () => 0),
+    validate: vi.fn(async () => ({reprojectionErrorPx: 0, sampleCount: 0})),
     measurePose
   };
   const runtime: TurboWarpRuntime = {
@@ -133,6 +133,21 @@ describe('measuring where the board is', () => {
     ).rejects.toThrow(/calibration-not-applicable: .*zoom 1 -> 2/u);
     expect(measurePose).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it('still measures when Camera Source does not report the settings at all', async () => {
+    // One withholding its calibration capability, or one from before it could
+    // report them. Nothing says the settings changed, and measuring was what
+    // it did before the check existed.
+    const {controller, measurePose} = setup();
+    const calibrated = {
+      ...(JSON.parse(PROFILE) as Record<string, unknown>),
+      capture: {zoom: 1, focusMode: 'manual'}
+    };
+    await controller.importProfile('camera-1', JSON.stringify(calibrated));
+    await controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'});
+    expect(measurePose).toHaveBeenCalledOnce();
+    expect(controller.errorCode('camera-1')).toBe('');
   });
 
   it('still measures with a profile that never recorded its settings', async () => {

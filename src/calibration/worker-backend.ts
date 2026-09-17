@@ -20,7 +20,8 @@ import type {
   CalibrationDetection,
   CalibrationFrame,
   CalibrationSample,
-  CalibrationSolveResult
+  CalibrationSolveResult,
+  CalibrationValidationResult
 } from './types.js';
 
 /**
@@ -103,7 +104,7 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     samples: readonly CalibrationSample[],
     board: CalibrationBoard,
     solution: CalibrationSolveResult
-  ): Promise<number> {
+  ): Promise<CalibrationValidationResult> {
     return this.call((solver) => solver.validate(samples, board, solution));
   }
 
@@ -150,7 +151,9 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     try {
       return await Promise.race([run(solver), lost, deadline]);
     } catch (error) {
-      if (error instanceof WorkerUnavailableError && this.worker === worker) this.dispose();
+      if ((error instanceof WorkerUnavailableError || isWasmAbort(error)) && this.worker === worker) {
+        this.dispose();
+      }
       throw error;
     } finally {
       clearTimeout(timer);
@@ -203,6 +206,20 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     const image = context.getImageData(0, 0, frame.width, frame.height);
     return {width: image.width, height: image.height, data: image.data};
   }
+}
+
+/**
+ * Whether an error is the WebAssembly module aborting.
+ *
+ * Emscripten's `abort()` -- out of memory, or a trap -- marks the module dead
+ * and throws a `WebAssembly.RuntimeError`, which comlink hands back as an
+ * ordinary error that keeps its name. The worker still answers after that, and
+ * every answer is another failure from a module that will never run again, so
+ * it is treated as a worker that is gone. An error OpenCV throws on purpose --
+ * a C++ exception -- is an answer and is not one of these.
+ */
+function isWasmAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === 'RuntimeError';
 }
 
 /** Creates the solver on first use, and never at load time. */

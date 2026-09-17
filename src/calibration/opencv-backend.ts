@@ -16,7 +16,8 @@ import type {
   CalibrationPixels,
   CalibrationDetection,
   CalibrationSample,
-  CalibrationSolveResult
+  CalibrationSolveResult,
+  CalibrationValidationResult
 } from './types.js';
 
 
@@ -508,8 +509,8 @@ export class OpenCvChessboardCalibration {
     samples: readonly CalibrationSample[],
     board: CalibrationBoard,
     solution: CalibrationSolveResult
-  ): Promise<number> {
-    if (samples.length === 0) return 0;
+  ): Promise<CalibrationValidationResult> {
+    if (samples.length === 0) return {reprojectionErrorPx: 0, sampleCount: 0};
     const cv = await this.ready;
     try {
       return this.reprojectHeldOut(cv, samples, board, solution);
@@ -523,7 +524,7 @@ export class OpenCvChessboardCalibration {
     samples: readonly CalibrationSample[],
     board: CalibrationBoard,
     solution: CalibrationSolveResult
-  ): number {
+  ): CalibrationValidationResult {
     const worldPoints = this.worldPointsFor(cv, board);
     const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
     const distortion = cv.matFromArray(
@@ -591,7 +592,7 @@ export class OpenCvChessboardCalibration {
     } finally {
       for (const matrix of scratch) matrix.delete();
     }
-    return heldOutRms(squared, counted, views);
+    return {reprojectionErrorPx: heldOutRms(squared, counted, views), sampleCount: views};
   }
 }
 

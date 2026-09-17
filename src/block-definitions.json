@@ -340,7 +340,7 @@
       "opcode": "cameraCalibrationHoldoutSampleCount",
       "blockType": "REPORTER",
       "text": "camera [CAMERA_ID] calibration holdout sample count",
-      "description": "Returns how many samples were held back from the solve. Zero means nothing was validated, so the holdout error says nothing.",
+      "description": "Returns how many samples held back from the solve were validated: the ones a pose could be solved for with its answer. Zero means nothing was validated, so the holdout error says nothing.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",
