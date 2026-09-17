@@ -217,6 +217,52 @@ describe('CameraCalibrationController', () => {
     expect(duplicate.controller.state('camera-1')).toBe('ready');
   });
 
+  it('recognises the same view when it shows a different set of corners', async () => {
+    // A ChArUco view need not show every corner, and the detector rarely finds
+    // exactly the same ones twice. Compared by position in the array, one
+    // corner fewer shifts every corner after it, and a board that did not move
+    // reads as a new view -- in either order.
+    const whole = sample(0);
+    const partial: CalibrationSample = {
+      ...whole,
+      corners: whole.corners.slice(1),
+      ids: whole.ids.slice(1)
+    };
+    for (const [first, second] of [
+      [whole, partial],
+      [partial, whole]
+    ] as const) {
+      const context = setup();
+      context.captureSample
+        .mockResolvedValueOnce({sample: first, markersSeen: 35})
+        .mockResolvedValueOnce({sample: second, markersSeen: 35});
+      await context.controller.start(startOptions);
+      await context.controller.addSample('camera-1');
+      await expect(context.controller.addSample('camera-1')).rejects.toThrow(
+        /sample-too-similar/u
+      );
+      expect(context.controller.sampleCount('camera-1')).toBe(1);
+    }
+  });
+
+  it('still takes a view that shares no corner with any held', async () => {
+    const whole = sample(0);
+    const context = setup();
+    context.captureSample
+      .mockResolvedValueOnce({
+        sample: {...whole, corners: whole.corners.slice(0, 27), ids: whole.ids.slice(0, 27)},
+        markersSeen: 35
+      })
+      .mockResolvedValueOnce({
+        sample: {...whole, corners: whole.corners.slice(27), ids: whole.ids.slice(27)},
+        markersSeen: 35
+      });
+    await context.controller.start(startOptions);
+    await context.controller.addSample('camera-1');
+    await context.controller.addSample('camera-1');
+    expect(context.controller.sampleCount('camera-1')).toBe(2);
+  });
+
   it('rejects changed capture conditions and excessive reprojection error', async () => {
     const resolution = setup();
     await resolution.controller.start(startOptions);
@@ -332,6 +378,14 @@ describe('CameraCalibrationController', () => {
       invalid.controller.start({...startOptions, board: {...startOptions.board, columns: 2}})
     ).rejects.toThrow(/invalid-board/u);
     expect(invalid.controller.errorCode('camera-1')).toBe('invalid-board');
+
+    // Every light square needs its own marker, and DICT_4X4_50 has fifty: a
+    // 10x9 board needs 55. Refused at the start, not at the first frame.
+    const oversized = setup();
+    await expect(
+      oversized.controller.start({...startOptions, board: {...startOptions.board, columns: 10, rows: 9}})
+    ).rejects.toThrow(/invalid-board: a 10x9 board needs 55 markers/u);
+    expect(oversized.acquireCamera).not.toHaveBeenCalled();
 
     const missing = setup();
     delete missing.runtime.ext_kubohiroyacamerasource;

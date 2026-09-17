@@ -314,6 +314,20 @@ describe('the automatic shutter', () => {
     expect(controller.guidance(CAMERA)).not.toBe('limit-reached');
   });
 
+  it('solves again at the sample limit, where the set changes but its size does not', async () => {
+    // At the cap every view taken displaces one held, so the count stays at
+    // forty while the views change. Keyed on the count, the shutter would
+    // never solve again, and an operator supplying exactly the views it asked
+    // for would be told to vary more for ever.
+    const {controller, clock, solve} = await started({holdoutError: 9});
+    await clock.run(120);
+    expect(controller.sampleCount(CAMERA)).toBe(40);
+    const solvesAtLimit = solve.mock.calls.length;
+    await clock.run(10);
+    expect(controller.sampleCount(CAMERA)).toBe(40);
+    expect(solve.mock.calls.length).toBeGreaterThan(solvesAtLimit);
+  });
+
   it('holds the answer against views it was not fitted to', async () => {
     const {controller, clock} = await started();
     await clock.run(14);

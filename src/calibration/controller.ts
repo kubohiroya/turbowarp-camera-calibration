@@ -44,6 +44,7 @@ import {
   tiltOf,
   weakestTiltDirection
 } from './pose.js';
+import {DICT_4X4_50} from '../board/aruco.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -193,7 +194,15 @@ class CameraCalibration {
   private noveltyNow = 0;
   /** The furthest along this session has been, in steps. Never falls. */
   private progressReached = 0;
-  /** Sample count the last automatic solve was started from. */
+  /**
+   * Views accepted this session, counting the ones since dropped.
+   *
+   * Not the size of the set. At the cap a view is dropped for every view
+   * added, so the size stops moving while what the set holds keeps changing --
+   * and a solve keyed on the size would never run again.
+   */
+  private collected = 0;
+  /** The value of `collected` the last automatic solve was started from. */
   private solvedFrom = 0;
 
   public constructor(
@@ -268,6 +277,7 @@ class CameraCalibration {
     };
     this.lease = lease;
     this.samples = [];
+    this.collected = 0;
     this.solvedFrom = 0;
     this.progressReached = 0;
     this.sessionSampleCount = 0;
@@ -469,8 +479,8 @@ class CameraCalibration {
   private startAutomaticSolve(operation: number): Promise<void> {
     // Nothing new to solve from. Re-running the solver on the same views would
     // produce the same answer at the same cost.
-    if (this.samples.length === this.solvedFrom) return Promise.resolve();
-    this.solvedFrom = this.samples.length;
+    if (this.collected === this.solvedFrom) return Promise.resolve();
+    this.solvedFrom = this.collected;
     const solving = this.automaticSolve(operation).catch(() => {
       // A solver that cannot answer for this set is not a session-ending
       // failure: more views may well fix it, and the operator is still
@@ -615,7 +625,12 @@ class CameraCalibration {
         `Camera ${this.cameraId} has no calibration profile, so nothing can say where the board is.`
       );
     }
-    const board = normalizeBoard(options.board);
+    let board: CalibrationBoard;
+    try {
+      board = normalizeBoard(options.board);
+    } catch (error) {
+      this.refuse('invalid-board', error instanceof Error ? error.message : String(error));
+    }
     let lease: CameraLease;
     try {
       lease = await requireCameraSource(this.runtime).acquireCamera({
@@ -630,6 +645,16 @@ class CameraCalibration {
     }
     try {
       const frame = requireVideoFrame(lease);
+      // The intrinsics are in the pixels of the image they were solved at. Read
+      // against a frame of another size they still produce a pose -- a
+      // plausible one, wrong by the ratio of the two -- so the mismatch is
+      // refused here rather than left to show up downstream.
+      if (frame.width !== profile.imageWidth || frame.height !== profile.imageHeight) {
+        this.refuse(
+          'calibration-not-applicable',
+          `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${frame.width}x${frame.height}.`
+        );
+      }
       const backend = await this.resolveBackend();
       const pose = await backend.measurePose(
         {element: frame.element, width: frame.width, height: frame.height},
@@ -926,6 +951,7 @@ class CameraCalibration {
     }
     if (automatic && this.samples.length >= MAXIMUM_SAMPLES) this.dropTheDullest(session);
     this.samples.push(accepted);
+    this.collected += 1;
     this.sessionSampleCount = this.samples.length;
     this.sampleQuality = accepted.quality;
     this.calibrationState = 'ready';
@@ -1392,6 +1418,15 @@ function normalizeBoard(board: CalibrationBoard): CalibrationBoard {
   ) {
     throw new Error('marker size must be greater than zero and smaller than the square size.');
   }
+  // Every light square carries its own marker, and the dictionary has only so
+  // many. A board that needs more is accepted by nothing downstream: OpenCV
+  // refuses to build it, and not until the first frame is looked at.
+  const markers = boardMarkerCount(columns, rows);
+  if (markers > DICT_4X4_50.length) {
+    throw new Error(
+      `a ${columns}x${rows} board needs ${markers} markers, and DICT_4X4_50 has ${DICT_4X4_50.length}.`
+    );
+  }
   return {
     columns,
     rows,
@@ -1417,20 +1452,43 @@ function normalizeStartOptions(options: CalibrationStartOptions): CalibrationSta
   };
 }
 
+/** Markers on a board of `columns` by `rows` inner corners: one per light square. */
+function boardMarkerCount(columns: number, rows: number): number {
+  return Math.floor(((columns + 1) * (rows + 1)) / 2);
+}
+
+/**
+ * How far the corners two views share moved, as a share of the image diagonal.
+ *
+ * Matched by id, not by position in the array. Two views of a ChArUco board
+ * rarely show the same corners, and one corner more or fewer shifts every
+ * position after it -- so comparing by position compares different corners,
+ * and a board that did not move reads as one that did.
+ *
+ * Views with no corner in common cannot be the same view.
+ */
 function normalizedCornerDistance(
   left: CalibrationSample,
   right: CalibrationSample,
   width: number,
   height: number
 ): number {
+  const rightById = new Map<number, CalibrationSample['corners'][number]>();
+  right.ids.forEach((id, index) => {
+    const corner = right.corners[index];
+    if (corner) rightById.set(id, corner);
+  });
   let squared = 0;
-  for (let index = 0; index < left.corners.length; index += 1) {
+  let shared = 0;
+  left.ids.forEach((id, index) => {
     const a = left.corners[index];
-    const b = right.corners[index];
-    if (!a || !b) return Number.POSITIVE_INFINITY;
+    const b = rightById.get(id);
+    if (!a || !b) return;
     squared += (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-  }
-  return Math.sqrt(squared / left.corners.length) / Math.hypot(width, height);
+    shared += 1;
+  });
+  if (shared === 0) return Number.POSITIVE_INFINITY;
+  return Math.sqrt(squared / shared) / Math.hypot(width, height);
 }
 
 function identifier(value: string, label: string): string {
