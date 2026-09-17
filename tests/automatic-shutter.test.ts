@@ -490,6 +490,30 @@ describe('the automatic shutter', () => {
     expect(clock.waiting()).toBe(0);
   });
 
+  it('clears its guidance when the settings change during a background solve', async () => {
+    let zoom = 1;
+    const {controller, clock, solve} = await started({
+      conditions: () => ({width: 800, height: 600, deviceId: 'device-1', focusMode: 'manual', zoom})
+    });
+    let open: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const answer = solve.getMockImplementation();
+    solve.mockImplementation(async (...args) => {
+      await gate;
+      return answer!(...args);
+    });
+    for (let look = 0; look < 20 && solve.mock.calls.length === 0; look += 1) await clock.run(1);
+    expect(controller.guidance(CAMERA)).toBe('solving');
+    zoom = 2;
+    open?.();
+    for (let turn = 0; turn < 60; turn += 1) await Promise.resolve();
+    expect(controller.state(CAMERA)).toBe('error');
+    expect(controller.errorCode(CAMERA)).toBe('capture-condition-mismatch');
+    expect(controller.guidance(CAMERA)).toBe('');
+  });
+
   it('holds the answer against views it was not fitted to', async () => {
     const {controller, clock} = await started();
     await clock.run(14);

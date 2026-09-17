@@ -643,6 +643,28 @@ describe('CameraCalibrationController', () => {
     expect(context.release).toHaveBeenCalledOnce();
   });
 
+  it('advises locking the focus only when the focus is what moved', async () => {
+    // A zoom change on a camera that happens to be focusing continuously is
+    // not fixed by locking the focus.
+    const context = setup();
+    let zoom = 1;
+    Object.assign(context.capability, {
+      conditionsFor: vi.fn(() => ({
+        width: 800,
+        height: 600,
+        deviceId: 'device-1',
+        previewFlip: 'none',
+        focusMode: 'continuous',
+        zoom
+      }))
+    });
+    await context.controller.start(startOptions);
+    await context.controller.addSample('camera-1');
+    zoom = 2;
+    await expect(context.controller.addSample('camera-1')).rejects.toThrow(/zoom 1 -> 2/u);
+    expect(context.controller.errorMessage('camera-1')).not.toMatch(/Lock the focus/u);
+  });
+
   it('still calibrates when the camera cannot say how it is configured', async () => {
     // A footnote, not a precondition. Without it the profile is solved and
     // published as before; it simply cannot later be judged to fit.
