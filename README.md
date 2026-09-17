@@ -98,7 +98,7 @@ the operator instead:
 | Guidance | Meaning |
 |---|---|
 | `show-the-board` | Nothing is visible |
-| `wrong-board` | Markers are visible but no corners of the selected board: another board, or the right one at an unreadable angle |
+| `wrong-board` | Markers are visible but fewer than six corners of the selected board: another board, or the right one at an unreadable angle |
 | `hold-steadier` | The view is blurred |
 | `move-or-tilt` | The view is too much like one already kept |
 | `tilt-more` | The kept views are not tilted enough to solve from |
@@ -295,7 +295,7 @@ generated section manually.
 
 ### `start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m max error [MAX_ERROR_PX] px`
 
-Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is a ChArUco target: a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.
+Leases one shared Camera Source camera and fixes its real capture resolution and capture conditions for a ChArUco calibration session. The board is a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.
 
 | Property | Value |
 |---|---|
@@ -311,7 +311,7 @@ Leases one shared Camera Source camera and fixes its real capture resolution for
 
 ### `add calibration sample for camera [CAMERA_ID]`
 
-Detects the complete board in the current shared frame and retains it when its quality and its novelty against the retained samples both pass.
+Detects the board in the current shared frame and retains it when its quality and its novelty against the retained samples both pass. The whole board need not be visible: a view that shows at least six of its corners counts, which is what lets the board reach the edges of the frame.
 
 | Property | Value |
 |---|---|
@@ -341,7 +341,7 @@ Hands the shutter back. The session stays open with everything collected so far,
 
 ### `automatic capture running for camera [CAMERA_ID]?`
 
-Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the sample limit is reached, and when the camera goes away.
+Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the capture conditions change, and when the camera goes away. It does not stop at the sample limit: the retained view most like the others makes room for the new one.
 
 | Property | Value |
 |---|---|

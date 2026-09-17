@@ -10,20 +10,26 @@
 が所有します。
 
 ```text
-turbowarp-camera-source      カメラ取得、lease、preview、プロファイル契約
+turbowarp-camera-source      カメラ取得、lease、preview、撮影条件、プロファイル契約
         ^                             ^
         | lease                       | プロファイル提供
         |                             |
-turbowarp-camera-calibration  チェスボードのサンプル収集、solve、再投影誤差
+turbowarp-camera-calibration  ChArUcoボードの描画と検出、サンプル収集、solve、hold-out検証、板の姿勢
 ```
 
-この位置に境界を置いたのは実測に基づく判断です。`findChessboardCorners`と
-`calibrateCamera`に必要なOpenCVのbuildは約10 MBあり、TurboWarp機能拡張は
+この位置に境界を置いたのは実測に基づく判断です。ChArUcoボードの検出と
+`calibrateCameraExtended`にはOpenCVが必要で、TurboWarp機能拡張は
 単一のstandalone bundleとして配布されます。動的`import()`は別チャンクにならず
 同じfileへインライン展開されるため、solverをCamera Source内に置くと、校正を
 一度も行わない利用者を含めたすべてのカメラ利用者がその重量を負担します。
 起動時のfeature flagでは回避できません。flagが制御するのは実行であって、
 配信されるバイト数ではないからです。
+
+ここに同梱するOpenCVは、この機能拡張のためにbuildしたものです（`tools/opencv/`）。
+標準buildはWeb Worker内で初期化が終わりません。`ENVIRONMENT=web,worker`と、
+`src/calibration/opencv-symbols.ts`に列挙した関数だけのwhitelistでbuildすると、
+Worker内で起動し、10.9 MBではなく3.85 MBになります。`pnpm opencv:check`は、
+実際のbuildが列挙した関数をすべて持つかをブラウザで確かめます。
 
 ## build成果物
 
@@ -62,30 +68,52 @@ block、argument、menuはserialize前に識別子で整列します。text、de
 ## moduleの構成
 
 ```text
-src/calibration/types.ts         board、sample、solve結果、backendの継ぎ目
-src/calibration/profile.ts       内部校正プロファイル、その検証、旧形式のadapter
-src/calibration/camera-source.ts Camera Source capabilityのclient
-src/calibration/controller.ts    共有カメラ1台ごとのセッション
-src/calibration/opencv-backend.ts 固定versionのOpenCV solver。初回利用時に生成
-src/extension.ts                 blockの結線とruntimeのライフサイクル
+src/board/aruco.ts                 OpenCVから取り出したDICT_4X4_50のマーカー
+src/board/pattern.ts               板の定義とSVG描画。./runtimeから公開
+src/calibration/contract.ts        状態、エラーコード、案内、傾ける向き、進捗の関門
+src/calibration/types.ts           board、sample、solve結果、backendの継ぎ目
+src/calibration/pose.ts            板をどれだけ斜めから見たか、集合の広がり
+src/calibration/profile.ts         内部校正プロファイル、その検証、旧形式のadapter
+src/calibration/camera-source.ts   Camera Source capabilityのclient
+src/calibration/controller.ts      共有カメラ1台ごとのセッション（手動・自動）
+src/calibration/worker-backend.ts  main thread側。Workerを持ち、frameを読み、pixelを転送
+src/calibration/opencv-worker.ts   Workerの入口
+src/calibration/opencv-backend.ts  検出、solve、hold-out検証、板の姿勢（OpenCV）
+src/calibration/opencv-symbols.ts  backend名と、buildが持つ関数のwhitelist
+src/runtime.ts                     ./runtime sub-entry。宣言、定数、板の描画
+src/runtime-capability.ts          ほかの機能拡張が駆動するversion付きcapability
+src/extension.ts                   blockの結線とruntimeのライフサイクル
 ```
 
-OpenCVに触れるのは`opencv-backend.ts`だけで、controllerは
-`CalibrationBackendFactory`越しにのみ到達します。testはmock backendで手順全体を
-動かすため、solverは必要な場所だけで動きます。
+OpenCVに触れるのは`opencv-backend.ts`だけで、Worker内で動きます。controllerは
+`CalibrationBackendFactory`越しにのみ到達し、本番で渡されるのが
+`worker-backend.ts`です。`cv.imread`はWorkerに無いdocumentを要求するため、
+video要素を持つthreadでframeを読み、pixel bufferを転送します。testはmock backendで
+手順全体を動かすため、solverは必要な場所だけで動きます。
+
+板の描画を検出器の隣に置くのは、ページが印刷する板と検出器が探す板を同じ数字から
+作るためです。`pnpm board:check`はブラウザで各板を描き、自分の検出器では全コーナーが
+見つかり、ほかの検出器では1つも見つからないことを確かめます。
 
 ## 校正の流れ
 
-1. 1つの`cameraId`についてCamera Sourceからleaseを取得し、その時点の解像度・device・左右反転にセッションを固定する。
-2. チェスボードのサンプルを収集し、品質の低い視点と類似しすぎる視点を拒否する。保持するのは8枚以上40枚以下。
-3. 内部行列と歪み係数を求め、RMS再投影誤差をセッションの上限と比較する。
-4. 得られた内部プロファイルをCamera Sourceのプロファイル契約経由で提供する。
-5. solve、cancel、cleanup、device喪失、project停止、project再読込、runtime破棄でleaseを解放する。
+1. 1つの`cameraId`についてCamera Sourceからleaseを取得し、大きさのあるframeを待って、その時点の解像度・device・左右反転・撮影条件（リサイズ、ズーム、フォーカス）にセッションを固定する。
+2. コーナーが6点以上写ったChArUcoのサンプルを収集し、ぶれた視点、類似しすぎる視点、別の板を拒否する。手動では40枚まで保持する。自動撮影は250 msごとに見て、40枚に達したら最も他と似ている1枚を入れ替える。
+3. 枚数が足りれば約5分の1を検証用に残して内部行列と歪み係数を求め、傾けていない組は拒否する。fit側の誤差をセッションの上限と比べ、hold-out誤差を報告する。自動撮影は背景でsolveを繰り返し、hold-out誤差が上限以下になったときだけ完了する。
+4. solveを確定する前に撮影条件を読み直し、変わっていれば solved ではなく`capture-condition-mismatch`で終える。
+5. 得られた内部プロファイルを、撮影条件とともにCamera Sourceのプロファイル契約経由で提供する。
+6. solve、cancel、cleanup、device喪失、project停止、project再読込、runtime破棄でleaseを解放する。
 
 内部校正と外部姿勢は分離したままにします。この機能拡張はworld姿勢を提供せず、
-提供されていない姿勢をidentityで代用することもありません。`calibrateCamera`は
-視点ごとの回転と並進も返しますが、それはboardの位置であってカメラの位置では
-ないため、姿勢として提供せず破棄します。
+提供されていない姿勢をidentityで代用することもありません。`calibrateCameraExtended`は
+視点ごとの回転と並進も返しますが、それは収集中に動いていた板の位置であってカメラの
+位置ではないため、姿勢として提供せず破棄します。
+
+動かなくなった板の位置は別の操作で測ります。板の姿勢測定は自分のleaseを取り、
+保持している校正と`solvePnP`で姿勢を解いて、leaseを返します。結果
+（`twcc/board-pose`）はカメラ座標系での板の姿勢で、スケールが`measured`か`nominal`か
+を記録し、観測したコーナーを添えて、配置を解くツールが共通座標へ解き直せるように
+します。内部プロファイルには混ぜません。
 
 ## 共有カメラ1台ごとのセッション
 
@@ -142,9 +170,9 @@ solve済みのままであり、すでに失敗したセッションがpublish�
 全ブロックとruntime capabilityは、機能拡張の登録時点で公開されます。
 切り替えスイッチはありません。
 
-登録自体は安価です。OpenCVのruntimeは最初のサンプル取得かsolveで初めて生成
+登録自体は安価です。WorkerとOpenCVのruntimeは最初に使うときに初めて生成
 されるので、状態やbackend名を読むだけのprojectでは初期化されません。カメラの
-leaseも校正を開始するまで要求しません。これらはflagが守っているのではなく、
+leaseも校正または測定を開始するまで要求しません。これらはflagが守っているのではなく、
 コードがどこで生成しているかによって成り立っています。
 
 ロールバックは「この機能拡張を読み込まない」ことです。自前の校正経路を残して

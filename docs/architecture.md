@@ -10,20 +10,27 @@ capture conditions — belongs to
 [TurboWarp-Camera-Source](https://github.com/kubohiroya/turbowarp-camera-source).
 
 ```text
-turbowarp-camera-source      camera acquisition, lease, preview, profile contract
+turbowarp-camera-source      camera acquisition, lease, preview, capture conditions, profile contract
         ^                             ^
         | lease                       | publish profile
         |                             |
-turbowarp-camera-calibration  chessboard sampling, solve, reprojection error
+turbowarp-camera-calibration  ChArUco board drawing and detection, sampling, solve, hold-out validation, board pose
 ```
 
-The boundary is placed here for a measured reason. The OpenCV build required to
-run `findChessboardCorners` and `calibrateCamera` is roughly 10 MB, and a
-TurboWarp extension is distributed as a single standalone bundle: a dynamic
-`import()` is inlined into that same file rather than split into a separate
-chunk. Placing the solver inside Camera Source would therefore charge every
-camera consumer for the solver, whether or not it ever calibrates. A startup
-feature flag cannot avoid that, because a flag gates execution, not bytes.
+The boundary is placed here for a measured reason. Detecting a ChArUco board
+and running `calibrateCameraExtended` needs OpenCV, and a TurboWarp extension is
+distributed as a single standalone bundle: a dynamic `import()` is inlined into
+that same file rather than split into a separate chunk. Placing the solver
+inside Camera Source would therefore charge every camera consumer for the
+solver, whether or not it ever calibrates. A startup feature flag cannot avoid
+that, because a flag gates execution, not bytes.
+
+The OpenCV carried here is built for this extension (`tools/opencv/`). The stock
+build never finishes initializing in a Web Worker; built with
+`ENVIRONMENT=web,worker` and a whitelist of the symbols listed in
+`src/calibration/opencv-symbols.ts`, it starts in a worker and is 3.85 MB rather
+than 10.9 MB. `pnpm opencv:check` asks the real build, in a browser, whether it
+provides every listed symbol.
 
 ## Build outputs
 
@@ -65,31 +72,57 @@ references.
 ## Module layout
 
 ```text
-src/calibration/types.ts         board, sample, solve result, backend seam
-src/calibration/profile.ts       the intrinsic profile, its validator, legacy adapter
-src/calibration/camera-source.ts the Camera Source capability client
-src/calibration/controller.ts    one session per shared camera
-src/calibration/opencv-backend.ts the pinned OpenCV solver, created on first use
-src/extension.ts                 block wiring and runtime lifecycle
+src/board/aruco.ts                 the DICT_4X4_50 marker bits, extracted from OpenCV
+src/board/pattern.ts               board definitions and the SVG drawing, published via ./runtime
+src/calibration/contract.ts        states, error codes, guidance, tilt directions, progress gates
+src/calibration/types.ts           board, sample, solve result, backend seam
+src/calibration/pose.ts            how obliquely a board was seen, and the spread of a set
+src/calibration/profile.ts         the intrinsic profile, its validator, legacy adapter
+src/calibration/camera-source.ts   the Camera Source capability client
+src/calibration/controller.ts      one session per shared camera, manual and automatic
+src/calibration/worker-backend.ts  main-thread side: owns the worker, reads frames, transfers pixels
+src/calibration/opencv-worker.ts   the worker entry
+src/calibration/opencv-backend.ts  detection, solve, hold-out validation, and board pose, in OpenCV
+src/calibration/opencv-symbols.ts  the backend name and the symbol whitelist the build carries
+src/runtime.ts                     the ./runtime sub-entry: declarations, constants, board drawing
+src/runtime-capability.ts          the versioned capability other extensions drive
+src/extension.ts                   block wiring and runtime lifecycle
 ```
 
-Only `opencv-backend.ts` touches OpenCV, and the controller reaches it through
-`CalibrationBackendFactory`. Tests drive the whole procedure against a mock
-backend, so the solver is exercised where it matters and nowhere else.
+Only `opencv-backend.ts` touches OpenCV, and it runs in the worker. The
+controller reaches it through `CalibrationBackendFactory`, and
+`worker-backend.ts` is the factory it is given in production: it reads the
+frame on the thread that owns the video element and transfers the pixel buffer
+across, because `cv.imread` needs a document the worker does not have. Tests
+drive the whole procedure against a mock backend, so the solver is exercised
+where it matters and nowhere else.
+
+The board drawing lives beside the detector so that the board a page prints and
+the board the detector looks for come from the same numbers. `pnpm board:check`
+renders each board in a browser and confirms that its own detector finds every
+corner and the other detectors find none.
 
 ## Calibration flow
 
-1. Acquire a lease for one `cameraId` from Camera Source and fix the session to the resolution, device, and mirroring the camera reports at that moment.
-2. Collect chessboard samples, rejecting low-quality and near-duplicate views. Between 8 and 40 samples are retained.
-3. Solve for the intrinsic matrix and distortion coefficients, and check the RMS reprojection error against the session limit.
-4. Publish the resulting intrinsic profile through the Camera Source profile contract.
-5. Release the lease on solve, cancel, cleanup, device loss, project stop, project reload, and runtime disposal.
+1. Acquire a lease for one `cameraId` from Camera Source, wait for a frame that has a size, and fix the session to the resolution, device, mirroring, and capture conditions (resize mode, zoom, focus) the camera reports at that moment.
+2. Collect ChArUco samples, each with at least six corners, rejecting blurred, near-duplicate, and wrong-board views. By hand, at most 40 are retained; automatic capture looks every 250 ms and, at 40, replaces the view most like the others.
+3. Solve for the intrinsic matrix and distortion coefficients, holding about a fifth of the views back when there are enough, and refuse a set that was never tilted. Check the fit error against the session limit and report the hold-out error; automatic capture re-solves in the background and finishes only when the hold-out error is within the limit.
+4. Before the solve lands, read the capture conditions again. If they changed, end in `capture-condition-mismatch` rather than solved.
+5. Publish the resulting intrinsic profile, with the capture conditions it was taken under, through the Camera Source profile contract.
+6. Release the lease on solve, cancel, cleanup, device loss, project stop, project reload, and runtime disposal.
 
 Intrinsic calibration and external pose stay separate. This extension never
 supplies a world pose, and never substitutes identity for one that is missing.
-OpenCV also returns a per-view rotation and translation from `calibrateCamera`;
-those describe where the board sat, not where the camera stands, so they are
-discarded rather than published as a pose.
+`calibrateCameraExtended` also returns a per-view rotation and translation;
+those describe where a moving board sat during collection, not where the camera
+stands, so they are discarded rather than published as a pose.
+
+Where a board that has stopped moving sits is a separate operation: the board
+pose measurement takes its own lease, solves the pose with `solvePnP` and the
+calibration already held, and gives the lease back. The result (`twcc/board-pose`)
+is the board in the camera's frame, records whether its scale was `measured` or
+`nominal`, and keeps the observed corners so a placement tool can re-solve it
+into a shared frame. It is never merged into the intrinsic profile.
 
 ## One session per shared camera
 
@@ -147,10 +180,10 @@ not repaired by asking to publish.
 Every block and the runtime capability are published as soon as the extension
 registers. There is no switch.
 
-Registering is cheap. The OpenCV runtime is created on the first sample or
-solve and never before, so a project that only reads the state or the backend
+Registering is cheap. The worker and its OpenCV runtime are created on first
+use and never before, so a project that only reads the state or the backend
 name never initializes it, and no camera lease is requested until a calibration
-starts. Those hold because of where the code creates things, not because of a
+or a measurement starts. Those hold because of where the code creates things, not because of a
 flag guarding them.
 
 Rolling back means not loading this extension. A consumer that still has its

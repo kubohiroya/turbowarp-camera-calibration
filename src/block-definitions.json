@@ -5,7 +5,7 @@
       "opcode": "startCameraCalibration",
       "blockType": "COMMAND",
       "text": "start camera [CAMERA_ID] calibration [CALIBRATION_ID] board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m max error [MAX_ERROR_PX] px",
-      "description": "Leases one shared Camera Source camera and fixes its real capture resolution for a chessboard calibration session. The board is a ChArUco target: a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.",
+      "description": "Leases one shared Camera Source camera and fixes its real capture resolution and capture conditions for a ChArUco calibration session. The board is a chessboard with an ArUco marker inside each light square, so a view that runs off the frame still contributes the corners it shows. The board is measured in inner corners, not printed squares.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",
@@ -41,7 +41,7 @@
       "opcode": "addCameraCalibrationSample",
       "blockType": "COMMAND",
       "text": "add calibration sample for camera [CAMERA_ID]",
-      "description": "Detects the complete board in the current shared frame and retains it when its quality and its novelty against the retained samples both pass.",
+      "description": "Detects the board in the current shared frame and retains it when its quality and its novelty against the retained samples both pass. The whole board need not be visible: a view that shows at least six of its corners counts, which is what lets the board reach the edges of the frame.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",
@@ -77,7 +77,7 @@
       "opcode": "automaticCameraCalibration",
       "blockType": "BOOLEAN",
       "text": "automatic capture running for camera [CAMERA_ID]?",
-      "description": "Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the sample limit is reached, and when the camera goes away.",
+      "description": "Reports whether the shutter is watching that camera on its own. It stops by itself when the session finishes, when the capture conditions change, and when the camera goes away. It does not stop at the sample limit: the retained view most like the others makes room for the new one.",
       "arguments": {
         "CAMERA_ID": {
           "type": "STRING",

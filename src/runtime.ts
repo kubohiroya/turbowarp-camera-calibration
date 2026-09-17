@@ -71,12 +71,11 @@ export const cameraCalibrationExtensionId = 'kubohiroyacameracalibration';
 /**
  * Narrows a runtime value to this extension's capability.
  *
- * Returns undefined when the extension is absent or its feature is off. Those
- * two are deliberately not distinguished here: the capability is withheld while
- * the flag is off, because a calibration that cannot acquire a camera is not a
- * calibration a caller should be able to start. A version this build does not
- * implement is a different matter -- `requireVersion` refuses that out loud,
- * because the extension is present and cannot do what was asked.
+ * Returns undefined when the extension is not loaded: the capability is on the
+ * runtime as soon as the extension registers, with no switch in between. A
+ * version this build does not implement is a different matter --
+ * `requireVersion` refuses that out loud, because the extension is present and
+ * cannot do what was asked.
  */
 export function readCameraCalibrationCapability(
   runtime: unknown
