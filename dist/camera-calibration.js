@@ -1677,9 +1677,14 @@
   * Camera Source reads a camera's settings and never changes them, so a focus
   * that moved under continuous autofocus cannot be fixed from the project. It
   * can be fixed in the camera's own settings, and nothing else says so.
+  *
+  * Only when the focus is what moved. A zoom or resize change on a camera that
+  * happens to be focusing continuously is not fixed by locking the focus, and
+  * saying so would send the operator after the wrong setting.
   */
-  function driftAdvice(current) {
-  	return current?.capture.focusMode === "continuous" ? " The camera is focusing continuously, which moves the focus -- and the focal length -- while the board moves. Lock the focus in the camera's own settings before calibrating." : "";
+  function driftAdvice(recorded, current) {
+  	if (current?.capture.focusMode !== "continuous") return "";
+  	return recorded.capture.focusMode !== current.capture.focusMode || recorded.capture.focusDistance !== current.capture.focusDistance ? " The camera is focusing continuously, which moves the focus -- and the focal length -- while the board moves. Lock the focus in the camera's own settings before calibrating." : "";
   }
   /**
   * What changed in the camera's optics since a session began, or undefined when nothing did.
@@ -3210,8 +3215,9 @@
   		const drift = conditionsDrift(session.conditions, current);
   		if (drift === void 0) return;
   		this.stopAutomatic();
+  		this.guide("");
   		await this.releaseSession();
-  		this.fail("capture-condition-mismatch", /* @__PURE__ */ new Error(`The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.${driftAdvice(current)}`));
+  		this.fail("capture-condition-mismatch", /* @__PURE__ */ new Error(`The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.${driftAdvice(session.conditions, current)}`));
   	}
   	/** Drops the session and releases its lease without touching diagnostics. */
   	async releaseSession() {
