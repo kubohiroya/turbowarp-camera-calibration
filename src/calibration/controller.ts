@@ -1,8 +1,11 @@
 import {
   CALIBRATION_LEASE_OWNER,
   CameraSourceError,
+  cameraConditionsOf,
   captureConditionsOf,
+  compatibilityObjections,
   conditionsDrift,
+  driftAdvice,
   requireCameraSource,
   requireProfileRegistry,
   toCameraSourceProfile,
@@ -714,24 +717,18 @@ class CameraCalibration {
       }
       // Zoom and focus move the focal length and the distortion without
       // changing the frame size, and a pose read through optics that no longer
-      // hold is wrong in distance with nothing to show for it. Judged the way
-      // a solve is judged before it lands; a profile that never recorded its
-      // settings has nothing to compare, as before.
-      // A Camera Source that does not report settings at all -- one withholding
-      // its calibration capability, or one from before it could -- cannot say
-      // they changed either, and measuring as before is what it did.
-      const current = captureConditionsOf(this.runtime, this.cameraId);
-      if (profile.capture && current) {
-        const drift = conditionsDrift(
-          {capture: profile.capture, device: profile.device ?? {}},
-          current
+      // hold is wrong in distance with nothing to show for it. Whether they
+      // still hold is Camera Source's verdict. A Camera Source that reports no
+      // settings at all -- one withholding its calibration capability, or one
+      // from before it could -- cannot say they changed either, and measuring
+      // as before is what it did.
+      const conditions = cameraConditionsOf(this.runtime, this.cameraId);
+      const objections = conditions ? compatibilityObjections(profile, conditions) : [];
+      if (objections.length > 0) {
+        this.refuse(
+          'calibration-not-applicable',
+          `The profile does not fit camera ${this.cameraId} as it is configured now. ${objections.join(' ')}`
         );
-        if (drift !== undefined) {
-          this.refuse(
-            'calibration-not-applicable',
-            `The camera settings differ from the ones the profile was calibrated under (${drift}).`
-          );
-        }
       }
       const backend = await this.resolveBackend();
       const pose = await backend.measurePose(
@@ -974,6 +971,11 @@ class CameraCalibration {
         `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`
       );
     }
+    // Checked on every view as well as before the solve lands. A change found
+    // only then is found after every view has been collected, and the operator
+    // learns that the whole collection was wasted rather than that the camera
+    // just refocused.
+    await this.endOnDrift(session);
     let detection: CalibrationDetection | undefined;
     try {
       const backend = await this.resolveBackend();
@@ -1226,22 +1228,7 @@ class CameraCalibration {
     // under conditions that no longer hold, and only a new session can fix it.
     // A camera that never said how it was configured has nothing to drift
     // from, and still calibrates.
-    if (session.conditions) {
-      const drift = conditionsDrift(
-        session.conditions,
-        captureConditionsOf(this.runtime, this.cameraId)
-      );
-      if (drift !== undefined) {
-        this.stopAutomatic();
-        await this.releaseSession();
-        this.fail(
-          'capture-condition-mismatch',
-          new Error(
-            `The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.`
-          )
-        );
-      }
-    }
+    await this.endOnDrift(session);
     const sampleCount = this.samples.length;
     let profile: CameraIntrinsicsV1;
     try {
@@ -1286,6 +1273,30 @@ class CameraCalibration {
     this.clearError();
     this.guide('complete');
     await lease.release();
+  }
+
+  /**
+   * Ends the session in `capture-condition-mismatch` when the camera's optics
+   * changed since it began.
+   *
+   * Solved means usable on this camera, and a collection whose views were not
+   * all taken under the conditions the profile would claim is not. Only a new
+   * session can fix it. A camera that never said how it was configured has
+   * nothing to drift from, and still calibrates.
+   */
+  private async endOnDrift(session: CalibrationSession): Promise<void> {
+    if (!session.conditions) return;
+    const current = captureConditionsOf(this.runtime, this.cameraId);
+    const drift = conditionsDrift(session.conditions, current);
+    if (drift === undefined) return;
+    this.stopAutomatic();
+    await this.releaseSession();
+    this.fail(
+      'capture-condition-mismatch',
+      new Error(
+        `The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.${driftAdvice(current)}`
+      )
+    );
   }
 
   /** Drops the session and releases its lease without touching diagnostics. */

@@ -615,6 +615,34 @@ describe('CameraCalibrationController', () => {
     expect(published.device).toEqual(profile.device);
   });
 
+  it('ends the session at the view where the settings changed, not at the solve', async () => {
+    // Found only before the solve lands, a change is found after every view
+    // has been collected. Continuous autofocus is the usual cause, and it
+    // cannot be locked from a project, so the operator is told where to.
+    const context = setup();
+    let focusDistance = 0.3;
+    Object.assign(context.capability, {
+      conditionsFor: vi.fn(() => ({
+        width: 800,
+        height: 600,
+        deviceId: 'device-1',
+        previewFlip: 'none',
+        focusMode: 'continuous',
+        focusDistance
+      }))
+    });
+    await context.controller.start(startOptions);
+    await context.controller.addSample('camera-1');
+    await context.controller.addSample('camera-1');
+    focusDistance = 0.45;
+    await expect(context.controller.addSample('camera-1')).rejects.toThrow(
+      /capture-condition-mismatch: .*focus distance 0\.3 -> 0\.45.*Lock the focus in the camera's own settings/u
+    );
+    expect(context.captureSample).toHaveBeenCalledTimes(2);
+    expect(context.controller.state('camera-1')).toBe('error');
+    expect(context.release).toHaveBeenCalledOnce();
+  });
+
   it('still calibrates when the camera cannot say how it is configured', async () => {
     // A footnote, not a precondition. Without it the profile is solved and
     // published as before; it simply cannot later be judged to fit.

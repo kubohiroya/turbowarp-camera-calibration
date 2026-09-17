@@ -416,192 +416,6 @@
   	return typeof requireVersion === "function" ? candidate : void 0;
   }
   //#endregion
-  //#region src/calibration/types.ts
-  /** Coefficient counts OpenCV emits for each supported distortion model. */
-  var DISTORTION_COEFFICIENT_COUNTS = Object.freeze({
-  	"none": [0],
-  	"opencv-plumb-bob": [4, 5],
-  	"opencv-rational": [8],
-  	"opencv-thin-prism": [12],
-  	"opencv-tilted": [14]
-  });
-  //#endregion
-  //#region src/calibration/camera-source.ts
-  /** The lease owner recorded with Camera Source, for diagnostics on its side. */
-  var CALIBRATION_LEASE_OWNER = "turbowarp-camera-calibration";
-  /** Recorded on every published profile, so a reader knows what solved it. */
-  var CALIBRATION_PRODUCER = "turbowarp-camera-calibration";
-  /** The version of Camera Source's runtime capability this extension speaks. */
-  var SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION = 1;
-  var CameraSourceError = class extends Error {
-  	constructor(code, message) {
-  		super(message);
-  		this.code = code;
-  		this.name = "CameraSourceError";
-  	}
-  };
-  /** Returns the Camera Source camera surface, or reports that it is not loaded. */
-  function requireCameraSource(runtime) {
-  	const candidate = readCameraSourceRuntime(runtime);
-  	if (!candidate) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded. Load it before calibrating; this extension never opens its own camera.");
-  	return candidate;
-  }
-  /**
-  * Returns the profile registry when Camera Source publishes a version this
-  * extension speaks.
-  *
-  * The capability key is separate from the extension key on purpose: Camera
-  * Source withholds the capability when its own calibration feature is off, so
-  * an extension that is loaded but not offering profiles is distinguishable from
-  * one that is absent, and neither is reported as the other.
-  */
-  /**
-  * How the camera is configured right now, as Camera Source reports it.
-  *
-  * Undefined when there is no capability to ask, or it has no answer: a
-  * calibration can still be solved without this, it just cannot later be judged
-  * compatible with anything. Never throws -- this is recorded alongside a
-  * calibration, and a calibration must not fail for want of a footnote.
-  */
-  function captureConditionsOf(runtime, cameraId) {
-  	const capability = readCameraSourceCapability(runtime);
-  	if (typeof capability?.conditionsFor !== "function") return void 0;
-  	let conditions;
-  	try {
-  		conditions = capability.conditionsFor(cameraId);
-  	} catch {
-  		return;
-  	}
-  	const capture = {};
-  	for (const key of [
-  		"resizeMode",
-  		"focusMode",
-  		"facingMode"
-  	]) {
-  		const value = conditions[key];
-  		if (typeof value === "string") capture[key] = value;
-  	}
-  	for (const key of [
-  		"zoom",
-  		"focusDistance",
-  		"frameRate"
-  	]) {
-  		const value = conditions[key];
-  		if (typeof value === "number" && Number.isFinite(value)) capture[key] = value;
-  	}
-  	const device = {};
-  	if (typeof conditions.label === "string" && conditions.label.length > 0) device.label = conditions.label;
-  	if (typeof conditions.deviceId === "string" && conditions.deviceId.length > 0) device.deviceId = conditions.deviceId;
-  	return {
-  		capture,
-  		device
-  	};
-  }
-  /**
-  * What changed in the camera's optics since a session began, or undefined when nothing did.
-  *
-  * The members are the ones Camera Source decides a profile's fit on -- resize mode, zoom, focus
-  * mode and focus distance, compared with its tolerances, and the device label. A difference in
-  * any of them would make the profile being solved `incompatible` with this camera the moment it
-  * was registered; conditions that could be read at the start and cannot be read now would make it
-  * `undetermined`. Either way the views were not all taken under the conditions the profile is
-  * about to claim, so the session is not worth ending as solved.
-  *
-  * Frame rate, facing mode and the device id are left out for the reason Camera Source leaves them
-  * out: none of them changes how the lens projects.
-  */
-  function conditionsDrift(recorded, current) {
-  	if (!current) return "the camera no longer reports how it is configured";
-  	const changed = [];
-  	const text = (name, left, right) => {
-  		if (left !== right) changed.push(`${name} ${left ?? "not reported"} -> ${right ?? "not reported"}`);
-  	};
-  	const number = (name, left, right) => {
-  		if (!(left === void 0 || right === void 0 ? left === right : Math.abs(left - right) <= 1e-6)) changed.push(`${name} ${left ?? "not reported"} -> ${right ?? "not reported"}`);
-  	};
-  	text("resize mode", recorded.capture.resizeMode, current.capture.resizeMode);
-  	number("zoom", recorded.capture.zoom, current.capture.zoom);
-  	text("focus mode", recorded.capture.focusMode, current.capture.focusMode);
-  	number("focus distance", recorded.capture.focusDistance, current.capture.focusDistance);
-  	if (recorded.device.label !== void 0 && current.device.label !== void 0) text("device", recorded.device.label, current.device.label);
-  	return changed.length === 0 ? void 0 : changed.join(", ");
-  }
-  function requireProfileRegistry(runtime) {
-  	if (!readCameraSourceRuntime(runtime)) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded, so no calibration profile registry exists.");
-  	const capability = readCameraSourceCapability(runtime);
-  	if (!capability) throw new CameraSourceError("api-version-mismatch", `The loaded Camera Source publishes no calibration profile registry. Version ${SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION} of its runtime capability is required.`);
-  	try {
-  		capability.requireVersion(SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION);
-  	} catch (error) {
-  		throw new CameraSourceError("api-version-mismatch", error instanceof Error ? error.message : String(error));
-  	}
-  	return capability;
-  }
-  /**
-  * Restates a solved profile as the document Camera Source validates.
-  *
-  * The two shapes are not the same and never were: this extension stores a flat
-  * profile with a packed nine-number matrix, and Camera Source names the pinhole
-  * parameters individually because an array cannot say whether it is row-major.
-  * The conversion happens here, at the boundary, so that what a project has
-  * saved and what `cameraCalibrationJson` reports keep their existing shape --
-  * an SB3 holding either format still imports.
-  *
-  * Nothing is invented on the way across. The image is stated as raw or already
-  * undistorted from `imageState` rather than assumed, and a distortion model
-  * with no counterpart is refused instead of being relabelled as the nearest
-  * one, which would leave a consumer applying the wrong coefficients to real
-  * pixels and getting a plausible wrong answer.
-  */
-  function toCameraSourceProfile(profile) {
-  	const [fx, skew, cx, , fy, cy] = profile.intrinsicMatrix;
-  	return {
-  		schema: "twcs/camera-intrinsics",
-  		profileId: profile.calibrationId,
-  		cameraId: profile.cameraId,
-  		calibratedAt: profile.calibratedAt,
-  		producer: CALIBRATION_PRODUCER,
-  		cameraModel: profile.cameraModel,
-  		image: {
-  			width: profile.imageWidth,
-  			height: profile.imageHeight,
-  			undistorted: profile.imageState === "undistorted"
-  		},
-  		intrinsics: {
-  			fx,
-  			fy,
-  			cx,
-  			cy,
-  			skew
-  		},
-  		distortion: {
-  			model: cameraSourceDistortionModel(profile.distortionModel),
-  			coefficients: [...profile.distortionCoefficients]
-  		},
-  		version: 1,
-  		...profile.quality ? { quality: { ...profile.quality } } : {},
-  		...profile.capture ? { capture: { ...profile.capture } } : {},
-  		...profile.device ? { device: { ...profile.device } } : {}
-  	};
-  }
-  /**
-  * Names this extension's distortion model the way Camera Source names it.
-  *
-  * `opencv-plumb-bob` and `opencv-rational` are the radial-tangential family
-  * Camera Source calls `brown-conrady`, in the same coefficient order. The thin
-  * prism and tilted-sensor layouts have no counterpart in that contract, so a
-  * profile using one cannot be published rather than being sent under a name
-  * that would make a consumer read its coefficients as something else.
-  */
-  function cameraSourceDistortionModel(model) {
-  	switch (model) {
-  		case "none": return "none";
-  		case "opencv-plumb-bob":
-  		case "opencv-rational": return "brown-conrady";
-  		default: throw new CameraSourceError("api-version-mismatch", `Camera Source has no distortion model matching ${model} (${String(DISTORTION_COEFFICIENT_COUNTS[model])} coefficients), so this profile cannot be published.`);
-  	}
-  }
-  //#endregion
   //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile.js
   var CAMERA_INTRINSIC_PROFILE_SCHEMA = "twcs/camera-intrinsics";
   /** The application-specific format this contract replaces. Read for migration, never written. */
@@ -1668,6 +1482,310 @@
   	return readCameraInfoYaml(trimmed);
   }
   //#endregion
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/compatibility.js
+  /** Zoom readings are device-reported floats; compare them with a tolerance rather than exactly. */
+  var ZOOM_TOLERANCE = 1e-6;
+  var FOCUS_DISTANCE_TOLERANCE = 1e-6;
+  function finding(code, state, decisive, detail) {
+  	return {
+  		code,
+  		state,
+  		decisive,
+  		detail
+  	};
+  }
+  function describe(value) {
+  	return value === void 0 ? "not reported" : String(value);
+  }
+  /**
+  * Compares one optical member.
+  *
+  * Absent on both sides is agreement, not ignorance: the device reported no such control when the
+  * calibration was solved and reports none now. Present on one side only is a change nobody can
+  * quantify, so it is left unknown rather than guessed in either direction.
+  */
+  function compareMember(code, name, recorded, observed, equal) {
+  	if (recorded === void 0 && observed === void 0) return finding(code, "matched", true, `Neither the profile nor the camera reports ${name}.`);
+  	if (recorded === void 0 || observed === void 0) return finding(code, "unknown", true, `${name} is ${describe(recorded)} in the profile and ${describe(observed)} now, so the two cannot be compared.`);
+  	const same = equal(recorded, observed);
+  	return finding(code, same ? "matched" : "mismatched", true, same ? `${name} is ${describe(observed)} in both.` : `${name} was ${describe(recorded)} at calibration and is ${describe(observed)} now.`);
+  }
+  var sameText = (left, right) => left === right;
+  var nearlyEqual = (tolerance) => (left, right) => Math.abs(left - right) <= tolerance;
+  function captureFindings(capture, conditions) {
+  	return [
+  		compareMember("resize-mode", "Resize mode", capture.resizeMode, conditions.resizeMode, sameText),
+  		compareMember("zoom", "Zoom", capture.zoom, conditions.zoom, nearlyEqual(ZOOM_TOLERANCE)),
+  		compareMember("focus-mode", "Focus mode", capture.focusMode, conditions.focusMode, sameText),
+  		compareMember("focus-distance", "Focus distance", capture.focusDistance, conditions.focusDistance, nearlyEqual(FOCUS_DISTANCE_TOLERANCE))
+  	];
+  }
+  function imageSizeFinding(profile, conditions) {
+  	const expected = `${profile.image.width}x${profile.image.height}`;
+  	if (conditions.width === 0 || conditions.height === 0) return finding("image-size", "unknown", true, `The camera has delivered no frame yet, so its size cannot be compared with the calibrated ${expected}.`);
+  	const actual = `${conditions.width}x${conditions.height}`;
+  	return actual === expected ? finding("image-size", "matched", true, `The frame is ${actual}, as calibrated.`) : finding("image-size", "mismatched", true, `The calibration was solved at ${expected} and the camera now delivers ${actual}.`);
+  }
+  function deviceFindings(profile, conditions) {
+  	const recordedLabel = profile.device?.label;
+  	const observedLabel = conditions.label;
+  	const label = recordedLabel !== void 0 && observedLabel !== void 0 ? finding("device-label", recordedLabel === observedLabel ? "matched" : "mismatched", true, recordedLabel === observedLabel ? `The camera still reports itself as ${observedLabel}.` : `The profile was solved on ${recordedLabel} and the camera now reports ${observedLabel}.`) : finding("device-label", "unknown", false, "A device label is missing on one side, which is normal before the browser grants camera permission.");
+  	const recordedId = profile.device?.deviceId;
+  	const observedId = conditions.deviceId.length === 0 ? void 0 : conditions.deviceId;
+  	return [label, finding("device-id", recordedId !== void 0 && observedId !== void 0 && recordedId === observedId ? "matched" : "unknown", false, "A device id is scoped to one browser and profile, so it changes without the camera changing. It is a hint for ordering candidates, never proof of identity.")];
+  }
+  /**
+  * Judges a profile against the conditions a camera reports.
+  *
+  * The verdict is `incompatible` when any decisive finding mismatched, `undetermined` when any
+  * decisive finding could not be settled, and `compatible` only when every decisive finding matched.
+  * Unknown never resolves upward into `compatible`.
+  */
+  function evaluateProfileCompatibility(profile, conditions) {
+  	const findings = [imageSizeFinding(profile, conditions)];
+  	if (profile.image.undistorted) findings.push(finding("undistorted-frames", "unknown", true, "The profile describes already undistorted images. This extension hands over the camera frames as captured and cannot confirm that something upstream corrects them."));
+  	if (profile.capture === void 0) findings.push(finding("capture-conditions", "unknown", true, "The profile records no capture conditions, so whether the optics are configured as they were at calibration cannot be decided."));
+  	else findings.push(...captureFindings(profile.capture, conditions));
+  	findings.push(finding("frame-rate", "matched", false, `Frame rate was ${describe(profile.capture?.frameRate)} at calibration and is ${describe(conditions.frameRate)} now. It does not change how the lens projects.`), finding("facing-mode", "matched", false, `Facing mode was ${describe(profile.capture?.facingMode)} at calibration and is ${describe(conditions.facingMode)} now.`), ...deviceFindings(profile, conditions));
+  	const decisive = findings.filter((entry) => entry.decisive);
+  	return {
+  		state: decisive.some((entry) => entry.state === "mismatched") ? "incompatible" : decisive.some((entry) => entry.state === "unknown") ? "undetermined" : "compatible",
+  		findings
+  	};
+  }
+  //#endregion
+  //#region src/calibration/types.ts
+  /** Coefficient counts OpenCV emits for each supported distortion model. */
+  var DISTORTION_COEFFICIENT_COUNTS = Object.freeze({
+  	"none": [0],
+  	"opencv-plumb-bob": [4, 5],
+  	"opencv-rational": [8],
+  	"opencv-thin-prism": [12],
+  	"opencv-tilted": [14]
+  });
+  //#endregion
+  //#region src/calibration/camera-source.ts
+  /** The lease owner recorded with Camera Source, for diagnostics on its side. */
+  var CALIBRATION_LEASE_OWNER = "turbowarp-camera-calibration";
+  /** Recorded on every published profile, so a reader knows what solved it. */
+  var CALIBRATION_PRODUCER = "turbowarp-camera-calibration";
+  /** The version of Camera Source's runtime capability this extension speaks. */
+  var SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION = 1;
+  var CameraSourceError = class extends Error {
+  	constructor(code, message) {
+  		super(message);
+  		this.code = code;
+  		this.name = "CameraSourceError";
+  	}
+  };
+  /** Returns the Camera Source camera surface, or reports that it is not loaded. */
+  function requireCameraSource(runtime) {
+  	const candidate = readCameraSourceRuntime(runtime);
+  	if (!candidate) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded. Load it before calibrating; this extension never opens its own camera.");
+  	return candidate;
+  }
+  /**
+  * Returns the profile registry when Camera Source publishes a version this
+  * extension speaks.
+  *
+  * The capability key is separate from the extension key on purpose: Camera
+  * Source withholds the capability when its own calibration feature is off, so
+  * an extension that is loaded but not offering profiles is distinguishable from
+  * one that is absent, and neither is reported as the other.
+  */
+  /**
+  * How the camera is configured right now, as Camera Source reports it.
+  *
+  * Undefined when there is no capability to ask, or it has no answer: a
+  * calibration can still be solved without this, it just cannot later be judged
+  * compatible with anything. Never throws -- this is recorded alongside a
+  * calibration, and a calibration must not fail for want of a footnote.
+  */
+  function captureConditionsOf(runtime, cameraId) {
+  	const conditions = cameraConditionsOf(runtime, cameraId);
+  	if (!conditions) return void 0;
+  	const capture = {};
+  	for (const key of [
+  		"resizeMode",
+  		"focusMode",
+  		"facingMode"
+  	]) {
+  		const value = conditions[key];
+  		if (typeof value === "string") capture[key] = value;
+  	}
+  	for (const key of [
+  		"zoom",
+  		"focusDistance",
+  		"frameRate"
+  	]) {
+  		const value = conditions[key];
+  		if (typeof value === "number" && Number.isFinite(value)) capture[key] = value;
+  	}
+  	const device = {};
+  	if (typeof conditions.label === "string" && conditions.label.length > 0) device.label = conditions.label;
+  	if (typeof conditions.deviceId === "string" && conditions.deviceId.length > 0) device.deviceId = conditions.deviceId;
+  	return {
+  		capture,
+  		device
+  	};
+  }
+  /**
+  * The conditions record exactly as Camera Source reports it, or undefined when
+  * there is no capability to ask or it has no answer. Never throws.
+  */
+  function cameraConditionsOf(runtime, cameraId) {
+  	const capability = readCameraSourceCapability(runtime);
+  	if (typeof capability?.conditionsFor !== "function") return void 0;
+  	let conditions;
+  	try {
+  		conditions = capability.conditionsFor(cameraId);
+  	} catch {
+  		return;
+  	}
+  	if (typeof conditions !== "object" || conditions === null) return void 0;
+  	const { width, height, deviceId } = conditions;
+  	if (typeof width !== "number" || typeof height !== "number" || typeof deviceId !== "string") return;
+  	return conditions;
+  }
+  /**
+  * Why a profile does not fit the camera as it is now, in Camera Source's own
+  * words, or an empty list when nothing stands in the way.
+  *
+  * The verdict is Camera Source's, not a copy of its rules: this extension
+  * produces the profile, and whether a profile fits a camera is the question
+  * Camera Source answers for every consumer. A copy agrees until either side
+  * changes, and the way that disagreement shows is a pose read through optics
+  * one of them has stopped accepting.
+  *
+  * One of its findings is set aside. A profile that recorded no capture
+  * conditions cannot be judged at all, and refusing it would refuse every
+  * profile made before they were recorded; it is measured with, as it always
+  * was. Every other finding that decides the verdict and is not a match stands
+  * in the way -- including one that cannot be settled, because an optic that
+  * may have changed is not one to measure through.
+  */
+  function compatibilityObjections(profile, conditions) {
+  	return evaluateProfileCompatibility(toCameraSourceProfile({
+  		...profile,
+  		distortionModel: "none",
+  		distortionCoefficients: []
+  	}), conditions).findings.filter((finding) => finding.decisive && finding.state !== "matched" && finding.code !== "capture-conditions").map((finding) => finding.detail);
+  }
+  /**
+  * What an operator can do about a drift, when there is something.
+  *
+  * Camera Source reads a camera's settings and never changes them, so a focus
+  * that moved under continuous autofocus cannot be fixed from the project. It
+  * can be fixed in the camera's own settings, and nothing else says so.
+  */
+  function driftAdvice(current) {
+  	return current?.capture.focusMode === "continuous" ? " The camera is focusing continuously, which moves the focus -- and the focal length -- while the board moves. Lock the focus in the camera's own settings before calibrating." : "";
+  }
+  /**
+  * What changed in the camera's optics since a session began, or undefined when nothing did.
+  *
+  * The members are the ones Camera Source decides a profile's fit on -- resize mode, zoom, focus
+  * mode and focus distance, compared with its tolerances, and the device label. A difference in
+  * any of them would make the profile being solved `incompatible` with this camera the moment it
+  * was registered; conditions that could be read at the start and cannot be read now would make it
+  * `undetermined`. Either way the views were not all taken under the conditions the profile is
+  * about to claim, so the session is not worth ending as solved.
+  *
+  * Frame rate, facing mode and the device id are left out for the reason Camera Source leaves them
+  * out: none of them changes how the lens projects.
+  */
+  function conditionsDrift(recorded, current) {
+  	if (!current) return "the camera no longer reports how it is configured";
+  	const changed = [];
+  	const text = (name, left, right) => {
+  		if (left !== right) changed.push(`${name} ${left ?? "not reported"} -> ${right ?? "not reported"}`);
+  	};
+  	const number = (name, left, right) => {
+  		if (!(left === void 0 || right === void 0 ? left === right : Math.abs(left - right) <= 1e-6)) changed.push(`${name} ${left ?? "not reported"} -> ${right ?? "not reported"}`);
+  	};
+  	text("resize mode", recorded.capture.resizeMode, current.capture.resizeMode);
+  	number("zoom", recorded.capture.zoom, current.capture.zoom);
+  	text("focus mode", recorded.capture.focusMode, current.capture.focusMode);
+  	number("focus distance", recorded.capture.focusDistance, current.capture.focusDistance);
+  	if (recorded.device.label !== void 0 && current.device.label !== void 0) text("device", recorded.device.label, current.device.label);
+  	return changed.length === 0 ? void 0 : changed.join(", ");
+  }
+  function requireProfileRegistry(runtime) {
+  	if (!readCameraSourceRuntime(runtime)) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded, so no calibration profile registry exists.");
+  	const capability = readCameraSourceCapability(runtime);
+  	if (!capability) throw new CameraSourceError("api-version-mismatch", `The loaded Camera Source publishes no calibration profile registry. Version ${SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION} of its runtime capability is required.`);
+  	try {
+  		capability.requireVersion(SUPPORTED_CAMERA_SOURCE_CAPABILITY_VERSION);
+  	} catch (error) {
+  		throw new CameraSourceError("api-version-mismatch", error instanceof Error ? error.message : String(error));
+  	}
+  	return capability;
+  }
+  /**
+  * Restates a solved profile as the document Camera Source validates.
+  *
+  * The two shapes are not the same and never were: this extension stores a flat
+  * profile with a packed nine-number matrix, and Camera Source names the pinhole
+  * parameters individually because an array cannot say whether it is row-major.
+  * The conversion happens here, at the boundary, so that what a project has
+  * saved and what `cameraCalibrationJson` reports keep their existing shape --
+  * an SB3 holding either format still imports.
+  *
+  * Nothing is invented on the way across. The image is stated as raw or already
+  * undistorted from `imageState` rather than assumed, and a distortion model
+  * with no counterpart is refused instead of being relabelled as the nearest
+  * one, which would leave a consumer applying the wrong coefficients to real
+  * pixels and getting a plausible wrong answer.
+  */
+  function toCameraSourceProfile(profile) {
+  	const [fx, skew, cx, , fy, cy] = profile.intrinsicMatrix;
+  	return {
+  		schema: "twcs/camera-intrinsics",
+  		profileId: profile.calibrationId,
+  		cameraId: profile.cameraId,
+  		calibratedAt: profile.calibratedAt,
+  		producer: CALIBRATION_PRODUCER,
+  		cameraModel: profile.cameraModel,
+  		image: {
+  			width: profile.imageWidth,
+  			height: profile.imageHeight,
+  			undistorted: profile.imageState === "undistorted"
+  		},
+  		intrinsics: {
+  			fx,
+  			fy,
+  			cx,
+  			cy,
+  			skew
+  		},
+  		distortion: {
+  			model: cameraSourceDistortionModel(profile.distortionModel),
+  			coefficients: [...profile.distortionCoefficients]
+  		},
+  		version: 1,
+  		...profile.quality ? { quality: { ...profile.quality } } : {},
+  		...profile.capture ? { capture: { ...profile.capture } } : {},
+  		...profile.device ? { device: { ...profile.device } } : {}
+  	};
+  }
+  /**
+  * Names this extension's distortion model the way Camera Source names it.
+  *
+  * `opencv-plumb-bob` and `opencv-rational` are the radial-tangential family
+  * Camera Source calls `brown-conrady`, in the same coefficient order. The thin
+  * prism and tilted-sensor layouts have no counterpart in that contract, so a
+  * profile using one cannot be published rather than being sent under a name
+  * that would make a consumer read its coefficients as something else.
+  */
+  function cameraSourceDistortionModel(model) {
+  	switch (model) {
+  		case "none": return "none";
+  		case "opencv-plumb-bob":
+  		case "opencv-rational": return "brown-conrady";
+  		default: throw new CameraSourceError("api-version-mismatch", `Camera Source has no distortion model matching ${model} (${String(DISTORTION_COEFFICIENT_COUNTS[model])} coefficients), so this profile cannot be published.`);
+  	}
+  }
+  //#endregion
   //#region src/calibration/profile.ts
   /**
   * The intrinsic calibration profile.
@@ -2712,14 +2830,9 @@
   		try {
   			const frame = requireVideoFrame(lease);
   			if (frame.width !== profile.imageWidth || frame.height !== profile.imageHeight) this.refuse("calibration-not-applicable", `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${frame.width}x${frame.height}.`);
-  			const current = captureConditionsOf(this.runtime, this.cameraId);
-  			if (profile.capture && current) {
-  				const drift = conditionsDrift({
-  					capture: profile.capture,
-  					device: profile.device ?? {}
-  				}, current);
-  				if (drift !== void 0) this.refuse("calibration-not-applicable", `The camera settings differ from the ones the profile was calibrated under (${drift}).`);
-  			}
+  			const conditions = cameraConditionsOf(this.runtime, this.cameraId);
+  			const objections = conditions ? compatibilityObjections(profile, conditions) : [];
+  			if (objections.length > 0) this.refuse("calibration-not-applicable", `The profile does not fit camera ${this.cameraId} as it is configured now. ${objections.join(" ")}`);
   			const pose = await (await this.resolveBackend()).measurePose({
   				element: frame.element,
   				width: frame.width,
@@ -2879,6 +2992,7 @@
   		}
   		if (frame.width !== session.imageWidth || frame.height !== session.imageHeight) this.reject("resolution-mismatch", `Expected ${session.imageWidth}x${session.imageHeight}, received ${frame.width}x${frame.height}.`);
   		if (frame.deviceId !== session.deviceId || frame.previewFlip !== session.previewFlip) this.reject("capture-condition-mismatch", `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`);
+  		await this.endOnDrift(session);
   		let detection;
   		try {
   			detection = await (await this.resolveBackend()).captureSample({
@@ -3040,14 +3154,7 @@
   	* it.
   	*/
   	async finishSolve(session, lease, solution, fittedCount, automatic) {
-  		if (session.conditions) {
-  			const drift = conditionsDrift(session.conditions, captureConditionsOf(this.runtime, this.cameraId));
-  			if (drift !== void 0) {
-  				this.stopAutomatic();
-  				await this.releaseSession();
-  				this.fail("capture-condition-mismatch", /* @__PURE__ */ new Error(`The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.`));
-  			}
-  		}
+  		await this.endOnDrift(session);
   		const sampleCount = this.samples.length;
   		let profile;
   		try {
@@ -3087,6 +3194,24 @@
   		this.clearError();
   		this.guide("complete");
   		await lease.release();
+  	}
+  	/**
+  	* Ends the session in `capture-condition-mismatch` when the camera's optics
+  	* changed since it began.
+  	*
+  	* Solved means usable on this camera, and a collection whose views were not
+  	* all taken under the conditions the profile would claim is not. Only a new
+  	* session can fix it. A camera that never said how it was configured has
+  	* nothing to drift from, and still calibrates.
+  	*/
+  	async endOnDrift(session) {
+  		if (!session.conditions) return;
+  		const current = captureConditionsOf(this.runtime, this.cameraId);
+  		const drift = conditionsDrift(session.conditions, current);
+  		if (drift === void 0) return;
+  		this.stopAutomatic();
+  		await this.releaseSession();
+  		this.fail("capture-condition-mismatch", /* @__PURE__ */ new Error(`The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.${driftAdvice(current)}`));
   	}
   	/** Drops the session and releases its lease without touching diagnostics. */
   	async releaseSession() {
