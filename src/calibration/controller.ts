@@ -1290,11 +1290,14 @@ class CameraCalibration {
     const drift = conditionsDrift(session.conditions, current);
     if (drift === undefined) return;
     this.stopAutomatic();
+    // Cleared here, not left to whoever called: a background solve that finds
+    // the drift ends the session with the shutter's last word still `solving`.
+    this.guide('');
     await this.releaseSession();
     this.fail(
       'capture-condition-mismatch',
       new Error(
-        `The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.${driftAdvice(current)}`
+        `The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.${driftAdvice(session.conditions, current)}`
       )
     );
   }

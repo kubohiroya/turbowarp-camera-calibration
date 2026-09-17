@@ -168,9 +168,20 @@ export function compatibilityObjections(
  * Camera Source reads a camera's settings and never changes them, so a focus
  * that moved under continuous autofocus cannot be fixed from the project. It
  * can be fixed in the camera's own settings, and nothing else says so.
+ *
+ * Only when the focus is what moved. A zoom or resize change on a camera that
+ * happens to be focusing continuously is not fixed by locking the focus, and
+ * saying so would send the operator after the wrong setting.
  */
-export function driftAdvice(current: {capture: CalibrationCapture} | undefined): string {
-  return current?.capture.focusMode === 'continuous'
+export function driftAdvice(
+  recorded: {capture: CalibrationCapture},
+  current: {capture: CalibrationCapture} | undefined
+): string {
+  if (current?.capture.focusMode !== 'continuous') return '';
+  const focusMoved =
+    recorded.capture.focusMode !== current.capture.focusMode ||
+    recorded.capture.focusDistance !== current.capture.focusDistance;
+  return focusMoved
     ? ' The camera is focusing continuously, which moves the focus -- and the focal length -- while the board moves. Lock the focus in the camera\'s own settings before calibrating.'
     : '';
 }
