@@ -32,6 +32,27 @@ export type {
 
 export type {CalibrationBoard} from './calibration/types.js';
 
+/**
+ * The board, drawn.
+ *
+ * Published so an app that shows or prints one is showing the board this
+ * extension looks for, rather than its own drawing of the same idea. Pure
+ * arithmetic and string building: nothing here reaches for a document, a
+ * camera, or OpenCV.
+ */
+export {
+  BOARDS,
+  MARKER_RATIO,
+  PRINT_HEIGHT_MM,
+  PRINT_WIDTH_MM,
+  boardName,
+  layout,
+  patternSvg,
+  printedCellMillimetres,
+  type BoardLayout,
+  type BoardSpec
+} from './board/pattern.js';
+
 export {
   createRuntimeCapability,
   runtimeCapabilityKey,

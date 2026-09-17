@@ -42,11 +42,22 @@ describe('the published runtime sub-entry', () => {
     expect(Object.keys(runtimeEntry).sort()).toEqual([
       // The shape of the progress ladder, so a consumer sonifying or drawing
       // it does not write the numbers down and then disagree with the source.
+      'BOARDS',
       'CALIBRATION_GATES',
       'CALIBRATION_PROGRESS_STEPS',
       'CALIBRATION_STEPS_PER_GATE',
+      // The board, drawn. Published so an app that shows or prints one is
+      // showing the board this extension looks for, and not its own drawing
+      // of the same idea.
+      'MARKER_RATIO',
+      'PRINT_HEIGHT_MM',
+      'PRINT_WIDTH_MM',
+      'boardName',
       'cameraCalibrationExtensionId',
       'createRuntimeCapability',
+      'layout',
+      'patternSvg',
+      'printedCellMillimetres',
       'readCameraCalibrationCapability',
       'runtimeCapabilityKey',
       'runtimeCapabilityVersion'
@@ -59,16 +70,40 @@ describe('the published runtime sub-entry', () => {
     expect(runtimeEntry.cameraCalibrationExtensionId).toBe(extensionConfig.id);
   });
 
-  it('reaches only modules that hold declarations', () => {
+  it('reaches only declarations and the board it draws', () => {
     // Anything reachable from here is paid for by every consumer. The
     // controller is deliberately absent: it reaches Camera Source and, on its
     // first sample, the OpenCV build.
+    //
+    // The two board modules are the exception, and they are here on purpose
+    // rather than by drift: drawing the board is a thing consumers ask this
+    // entry for, and the drawing has to come from the same numbers as the
+    // detector or the two agree only until one of them changes. They are
+    // arithmetic and string building over a fifty-entry table -- no document,
+    // no camera, no WebAssembly.
     expect(reachableFrom(ENTRY).sort()).toEqual([
+      'src/board/aruco.ts',
+      'src/board/pattern.ts',
       'src/calibration/contract.ts',
       'src/calibration/types.ts',
       'src/runtime-capability.ts',
       'src/runtime.ts'
     ]);
+  });
+
+  it('keeps the board drawing as small as it claims to be', () => {
+    // The claim above is "arithmetic and a table". If either module grows a
+    // dependency, every consumer that only wanted to print a sheet pays for
+    // it, and the sentence in the test above stops being true.
+    for (const module of ['src/board/pattern.ts', 'src/board/aruco.ts']) {
+      const source = readFileSync(new URL(`../${module}`, import.meta.url), 'utf8');
+      for (const global of ['document', 'window', 'navigator', 'Scratch', 'require(']) {
+        expect(source, module).not.toContain(global);
+      }
+      expect(source.match(/^import /gmu) ?? []).toHaveLength(
+        module.endsWith('pattern.ts') ? 1 : 0
+      );
+    }
   });
 
   it('imports no package a consumer would have to carry', () => {
