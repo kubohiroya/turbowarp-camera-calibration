@@ -1,5 +1,6 @@
 import {distortionModelForCoefficientCount} from './profile.js';
 import {OPENCV_BACKEND_NAME} from './opencv-symbols.js';
+import {cornersSpanBoard} from './pose.js';
 
 export {OPENCV_BACKEND_NAME};
 import type {
@@ -384,6 +385,9 @@ export class OpenCvChessboardCalibration {
       if (ids.rows < MINIMUM_CORNERS) return undefined;
       const observed = readPointPairs(corners.data32F);
       const identifiers: number[] = Array.from(ids.data32S);
+      // One line of corners fixes no plane, and solvePnP either throws on it or
+      // answers with a pose that is not one. The board is not usefully in view.
+      if (!cornersSpanBoard(identifiers, board)) return undefined;
       const worldPoints = this.worldPointsFor(cv, board);
 
       const objectPoint = cv.matFromArray(

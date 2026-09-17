@@ -154,6 +154,27 @@ export function poseSpread(
   return Math.sqrt(squared);
 }
 
+/**
+ * Whether the corners a view shows fix a plane: not all on one line of the board.
+ *
+ * Judged on the board's own grid, where a corner's place is exact, rather than
+ * in the image, where lens distortion bends a straight row of corners into a
+ * curve that would pass for a plane. A board running off the edge of the frame
+ * can leave a single strip of corners, and from those neither a calibration
+ * nor a pose can start: there is no homography to take from one line.
+ */
+export function cornersSpanBoard(ids: readonly number[], board: CalibrationBoard): boolean {
+  const {columns} = board;
+  const points = ids.map((id) => [id % columns, Math.floor(id / columns)] as const);
+  const [origin] = points;
+  if (!origin) return false;
+  const direction = points.find(([x, y]) => x !== origin[0] || y !== origin[1]);
+  if (!direction) return false;
+  const dx = direction[0] - origin[0];
+  const dy = direction[1] - origin[1];
+  return points.some(([x, y]) => dx * (y - origin[1]) - dy * (x - origin[0]) !== 0);
+}
+
 function mean(values: readonly number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((total, value) => total + value, 0) / values.length;

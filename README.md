@@ -620,15 +620,21 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 | Board not found, another board shown, blurred, or too similar to a kept view (by hand) | The sample is refused with `board-not-found`, `wrong-board`, `sample-low-quality`, or `sample-too-similar`, and the session stays ready |
 | The same, during automatic capture | No error; the guidance reporter says what to do instead |
 | 40 samples kept | By hand: `sample-limit`. Automatic: the view most like the others is replaced |
+| A view whose corners lie on one line of the board | Refused as `sample-low-quality` by hand; the automatic path asks to `show-the-board`. A board pose from such a view is `board-pose-unavailable` |
+| The solver fails on a frame or a set | `sample-failed` or `solve-failed`; the session stays ready with its views and its camera, so the step can be tried again |
+| The solver's worker stops answering | The call fails after 120 s, or at once when the worker reports an error, and the next call starts a new worker |
+| Sample or solve by hand while automatic capture is solving | A sample is refused until that solve ends. A solve waits for it and, unless it finished the session, solves as asked and reports its own result |
 | Solve from a set that was never tilted | `sample-poses-degenerate`; the session stays open for more samples |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
 | Resize mode, zoom, focus, or the camera changes before the solve | `capture-condition-mismatch`; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
 | Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added |
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
+| Board pose measured on a frame of another size than the profile | `calibration-not-applicable`; nothing is measured and the camera is released |
 | Board pose requested without a calibration, or with the board out of view | `not-calibrated` or `board-pose-unavailable` |
 | Solve succeeds | The camera lease is released immediately |
 | Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released |
 | Invalid input | Rejected before any session state changes, including a restart with a mistyped board |
+| A board needing more than the 50 markers of `DICT_4X4_50` (for example 10 by 9, which needs 55) | `invalid-board`, at the start rather than at the first frame |
 
 Each shared camera has its own session, profile, and diagnostics. Cancelling one
 camera never releases another camera's lease or stops another consumer of the

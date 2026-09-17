@@ -38,6 +38,7 @@ import type {
   TiltDirection
 } from './contract.js';
 import {
+  cornersSpanBoard,
   MINIMUM_POSE_SPREAD,
   poseSpread,
   tiltDistance,
@@ -175,6 +176,8 @@ class CameraCalibration {
   private acquiring: Promise<void> | undefined;
   private sampling: Promise<void> | undefined;
   private solving: Promise<void> | undefined;
+  /** Whether `solving` is the shutter's background solve, not one that was asked for. */
+  private solvingAutomatically = false;
   private profile: CameraIntrinsicsV1 | undefined;
   private boardPose: string = '';
   private sessionSampleCount = 0;
@@ -290,7 +293,10 @@ class CameraCalibration {
 
   public addSample(): Promise<void> {
     if (this.sampling) return this.sampling;
-    if (!this.session || !this.lease || this.calibrationState !== 'ready') {
+    // Also while the shutter solves in the background, where the state stays
+    // `ready`. A view added then is in neither the fit nor the hold-out, and
+    // the profile that solve produces would still count it.
+    if (!this.session || !this.lease || this.calibrationState !== 'ready' || this.solving) {
       throw new Error(`Camera ${this.cameraId} calibration is not ready to sample.`);
     }
     return this.track(this.captureSample(this.operation));
@@ -489,8 +495,12 @@ class CameraCalibration {
       if (this.calibrationState !== 'error') this.guide('keep-going');
     });
     this.solving = solving;
+    this.solvingAutomatically = true;
     const clear = () => {
-      if (this.solving === solving) this.solving = undefined;
+      if (this.solving === solving) {
+        this.solving = undefined;
+        this.solvingAutomatically = false;
+      }
     };
     void solving.then(clear, clear);
     return solving;
@@ -549,7 +559,16 @@ class CameraCalibration {
   }
 
   public solve(): Promise<void> {
-    if (this.solving) return this.solving;
+    if (this.solving) {
+      // A solve that was asked for answers the one asking. The shutter's own
+      // solve does not: it ends quietly when the set is not good enough, and
+      // handing that back would report a refusal as a success. Wait for it,
+      // and solve as asked unless it already finished the session.
+      if (!this.solvingAutomatically) return this.solving;
+      return this.solving.then(() =>
+        this.calibrationState === 'solved' ? undefined : this.solve()
+      );
+    }
     if (!this.session || !this.lease || this.calibrationState !== 'ready') {
       throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
     }
@@ -904,7 +923,9 @@ class CameraCalibration {
         session.board
       );
     } catch (error) {
-      this.fail('sample-failed', error);
+      // The solver could not read this frame. The session, its camera and the
+      // views already held are all still good, so it stays open.
+      this.rejectWith('sample-failed', error);
     }
     if (operation !== this.operation) return;
     const sample = detection.sample;
@@ -929,6 +950,16 @@ class CameraCalibration {
     // board running off the edge of the frame still contributes what it shows,
     // and those corners are near the image border -- which is where the
     // principal point and the distortion are decided.
+    // Corners on one line of the board -- a strip along the edge of the frame
+    // -- fix no plane. The solver has no homography to start from, and fails
+    // on the whole set or answers with nonsense.
+    if (!cornersSpanBoard(sample.ids, session.board)) {
+      if (automatic) return this.decline('show-the-board');
+      this.reject(
+        'sample-low-quality',
+        'The corners found lie on one line of the board. Show more of the board.'
+      );
+    }
     if (
       sample.corners.length !== sample.ids.length ||
       !Number.isFinite(sample.quality) ||
@@ -1064,7 +1095,10 @@ class CameraCalibration {
       );
       holdoutError = await backend.validate(heldOut, session.board, solution);
     } catch (error) {
-      this.fail('solve-failed', error);
+      // A set the solver cannot answer for is not a lost session: more views
+      // may fix it. Ending it here would also keep the camera leased by a
+      // session nothing can use.
+      this.rejectWith('solve-failed', error);
     }
     if (operation !== this.operation) return;
     this.reprojectionError = solution.reprojectionErrorPx;
@@ -1141,7 +1175,9 @@ class CameraCalibration {
         calibratedAt: new Date(this.nowMilliseconds()).toISOString()
       });
     } catch (error) {
-      this.fail('invalid-calibration', error);
+      // An answer outside the contract -- a principal point off the image --
+      // is a set that has not constrained the camera yet, not a lost session.
+      this.rejectWith('invalid-calibration', error);
     }
     this.stopAutomatic();
     this.profile = profile;
@@ -1170,6 +1206,12 @@ class CameraCalibration {
   private reject(code: CalibrationErrorCode, message: string): never {
     if (this.calibrationState !== 'ready' && this.lease) this.calibrationState = 'ready';
     this.refuse(code, message);
+  }
+
+  /** `reject`, keeping the cause. */
+  private rejectWith(code: CalibrationErrorCode, cause: unknown): never {
+    if (this.calibrationState !== 'ready' && this.lease) this.calibrationState = 'ready';
+    this.refuseWith(code, cause);
   }
 
   /** Records why an operation was refused, without touching the state. */
@@ -1302,6 +1344,11 @@ export class CameraCalibrationController {
   public async cleanupAll(): Promise<void> {
     await Promise.allSettled([...this.cameras.values()].map((camera) => camera.cleanup()));
     this.cameras.clear();
+    // The solver outlives every session on purpose, and nothing but this ends
+    // it: a disposed runtime would otherwise keep a worker holding OpenCV.
+    const backend = this.backendPromise;
+    this.backendPromise = undefined;
+    if (backend) (await backend.catch(() => undefined))?.dispose?.();
   }
 
   public backend(): string {

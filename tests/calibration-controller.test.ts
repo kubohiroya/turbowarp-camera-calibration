@@ -217,6 +217,67 @@ describe('CameraCalibrationController', () => {
     expect(duplicate.controller.state('camera-1')).toBe('ready');
   });
 
+  it('keeps the session open when the solver cannot read a frame', async () => {
+    // The camera, its lease and the views held are all still good. Ending the
+    // session would throw those away and keep the camera leased by a session
+    // that refuses every further step.
+    const {controller, captureSample, release} = setup();
+    await controller.start(startOptions);
+    await controller.addSample('camera-1');
+    captureSample.mockRejectedValueOnce(new Error('the solver crashed'));
+    await expect(controller.addSample('camera-1')).rejects.toThrow(/sample-failed/u);
+    expect(controller.errorCode('camera-1')).toBe('sample-failed');
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(release).not.toHaveBeenCalled();
+    await controller.addSample('camera-1');
+    expect(controller.sampleCount('camera-1')).toBe(2);
+    expect(controller.errorCode('camera-1')).toBe('');
+  });
+
+  it('keeps the views and the camera when a solve fails, so it can be tried again', async () => {
+    const {controller, solve, release} = setup();
+    await controller.start(startOptions);
+    await fillSamples(controller);
+    solve.mockRejectedValueOnce(new Error('the solver crashed'));
+    await expect(controller.solve('camera-1')).rejects.toThrow(/solve-failed/u);
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.sampleCount('camera-1')).toBe(8);
+    expect(release).not.toHaveBeenCalled();
+    await controller.solve('camera-1');
+    expect(controller.state('camera-1')).toBe('solved');
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a view whose corners lie on one line of the board', async () => {
+    // A strip of corners along the edge of the frame fixes no plane: the
+    // solver has no homography to start from and fails on the whole set.
+    const whole = sample(0);
+    const {controller, captureSample} = setup();
+    captureSample.mockResolvedValueOnce({
+      sample: {...whole, corners: whole.corners.slice(0, 9), ids: whole.ids.slice(0, 9)},
+      markersSeen: 10
+    });
+    await controller.start(startOptions);
+    await expect(controller.addSample('camera-1')).rejects.toThrow(
+      /sample-low-quality: The corners found lie on one line/u
+    );
+    expect(controller.sampleCount('camera-1')).toBe(0);
+    expect(controller.state('camera-1')).toBe('ready');
+  });
+
+  it('stops the solver when every camera is cleaned up', async () => {
+    // Nothing else ends it. A disposed runtime would otherwise keep a worker
+    // holding OpenCV.
+    const context = setup();
+    const dispose = vi.fn();
+    const backend = await context.create();
+    backend.dispose = dispose;
+    await context.controller.start(startOptions);
+    await context.controller.addSample('camera-1');
+    await context.controller.cleanupAll();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it('recognises the same view when it shows a different set of corners', async () => {
     // A ChArUco view need not show every corner, and the detector rarely finds
     // exactly the same ones twice. Compared by position in the array, one
@@ -546,10 +607,12 @@ describe('CameraCalibrationController', () => {
   });
 
   it('does not repair a failed session by asking to publish', async () => {
-    const {controller, captureSample} = setup();
-    captureSample.mockRejectedValue(new Error('the solver crashed'));
+    const {controller, lease} = setup();
     await controller.start(startOptions);
-    await expect(controller.addSample('camera-1')).rejects.toThrow(/sample-failed/u);
+    lease.getFrameSource = vi.fn(() => {
+      throw new Error('ended');
+    });
+    await expect(controller.addSample('camera-1')).rejects.toThrow(/camera-ended/u);
     expect(controller.state('camera-1')).toBe('error');
     await expect(controller.publishProfile('camera-1')).rejects.toThrow(/not-calibrated/u);
     expect(controller.state('camera-1')).toBe('error');
