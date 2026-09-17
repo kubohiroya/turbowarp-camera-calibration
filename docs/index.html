@@ -93,7 +93,7 @@ publish calibration profile for camera [default]</code></pre>
     <tr><td><code>cleanup calibration for camera [CAMERA_ID]</code></td><td>Command</td><td>Also clears the in-memory profile for that camera</td></tr>
     <tr><td><code>publish calibration profile for camera [CAMERA_ID]</code></td><td>Command</td><td>Registers the profile with Camera Source, which owns the contract</td></tr>
     <tr><td><code>measure camera [CAMERA_ID] board pose board [COLUMNS] by [ROWS] square [SQUARE_METERS] m marker [MARKER_METERS] m scale [SCALE_SOURCE]</code></td><td>Command</td><td>Measures where a board that has stopped moving is, in the calibrated camera's frame</td></tr>
-    <tr><td><code>import calibration profile [JSON] for camera [CAMERA_ID]</code></td><td>Command</td><td>Imports a profile after schema, credential, and applicability checks</td></tr>
+    <tr><td><code>import calibration profile [JSON] for camera [CAMERA_ID]</code></td><td>Command</td><td>Imports a profile after schema, credential, and applicability checks. Reads the ROS camera_info YAML file Camera Source writes, as well as JSON</td></tr>
     <tr><td><code>calibration profile [JSON] valid for camera [CAMERA_ID]?</code></td><td>Boolean</td><td>Validates a profile without replacing the stored one</td></tr>
     <tr><td><code>camera [CAMERA_ID] calibration ready?</code></td><td>Boolean</td><td>Whether the session can accept a sample or a solve</td></tr>
     <tr><td><code>camera calibration state [CAMERA_ID]</code></td><td>Reporter</td><td><code>idle</code>, <code>acquiring-camera</code>, <code>sampling</code>, <code>ready</code>, <code>solving</code>, <code>solved</code>, <code>cancelling</code>, or <code>error</code></td></tr>
@@ -142,6 +142,9 @@ publish calibration profile for camera [default]</code></pre>
   <p>The profile is intrinsics only: an intrinsic matrix, a distortion model and its coefficients, the calibrated image size, its quality, and when it was measured. It also records the capture conditions the camera reported when the session started (resize mode, zoom, focus mode and distance, frame rate, facing mode) and the camera's own name, so Camera Source can later answer whether the profile fits the camera in front of it. A value the camera did not report is left out rather than guessed.</p>
   <p>It never carries a world pose, and a pose that was not measured is never filled in with identity. Preview mirroring is a display concern; profile coordinates are always the unmirrored capture coordinates.</p>
   <p>Profiles written by <code>@kubohiroya/turbowarp-realtime-motion-capture</code> are accepted on import; their world pose is dropped rather than reinterpreted.</p>
+
+  <h2>Calibration files</h2>
+  <p>A calibration leaves the PC as a ROS <code>camera_info</code> YAML file. Publish the profile and read Camera Source's <code>camera profile YAML for [CAMERA_ID]</code> to write one; ROS and OpenCV-based tools read the standard part, and the capture conditions compatibility needs travel under <code>turbowarp_camera_source</code>. <code>import calibration profile</code> reads that file back through Camera Source's own reader, so it is accepted or refused for the same reasons there and here.</p>
 
   <h2>Board pose</h2>
   <p>A calibration needs the board to move, so where a board sits is measured separately, after calibration, once the board has stopped. The result is the board in the camera's frame, never a world pose. Its scale comes from the declared square size, so the block asks whether that size was <code>measured</code> with a ruler or is <code>nominal</code>, and records the answer. The observed corners are kept with it so a placement tool can re-solve the measurement into a shared frame.</p>

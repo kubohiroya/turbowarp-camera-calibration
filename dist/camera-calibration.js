@@ -214,7 +214,7 @@
   			"opcode": "importCameraCalibration",
   			"blockType": "COMMAND",
   			"text": "import calibration profile [JSON] for camera [CAMERA_ID]",
-  			"description": "Imports a calibration profile after schema, credential, and applicability checks. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.",
+  			"description": "Imports a calibration profile after schema, credential, and applicability checks. Accepts a calibration file as Camera Source writes it -- ROS camera_info YAML, or twcs/camera-intrinsics JSON -- read through Camera Source's own reader, as well as this extension's profile JSON. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.",
   			"arguments": {
   				"JSON": {
   					"type": "STRING",
@@ -353,7 +353,7 @@
   			"opcode": "cameraCalibrationJson",
   			"blockType": "REPORTER",
   			"text": "camera [CAMERA_ID] calibration profile JSON",
-  			"description": "Exports the stored intrinsic profile for that camera, or an empty string when none exists.",
+  			"description": "Returns the stored intrinsic profile in this extension's own JSON shape, or an empty string when none exists. To write a calibration to a file or a QR code, publish it and use Camera Source's camera profile YAML, which other tools read.",
   			"arguments": { "CAMERA_ID": {
   				"type": "STRING",
   				"defaultValue": "default"
@@ -372,7 +372,7 @@
   	]
   };
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.8.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
   /**
   * Where the extension instance puts itself on the VM runtime.
   *
@@ -602,6 +602,1072 @@
   	}
   }
   //#endregion
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile.js
+  var CAMERA_INTRINSIC_PROFILE_SCHEMA = "twcs/camera-intrinsics";
+  /** The application-specific format this contract replaces. Read for migration, never written. */
+  var LEGACY_CALIBRATION_SCHEMA = "twrmc/camera-calibration";
+  var IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+  var UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
+  var MAXIMUM_IMAGE_EDGE = 16384;
+  var MAXIMUM_PIXEL_MAGNITUDE = 1e7;
+  var MAXIMUM_DISTORTION_MAGNITUDE = 1e4;
+  var MAXIMUM_SAMPLE_COUNT = 1e4;
+  var MAXIMUM_REPROJECTION_ERROR_PX = 1e4;
+  var MAXIMUM_TEXT_LENGTH = 256;
+  var MAXIMUM_FRAME_RATE = 1e3;
+  var MAXIMUM_ZOOM = 1e3;
+  var MAXIMUM_FOCUS_DISTANCE = 1e4;
+  var MAXIMUM_SCAN_DEPTH = 16;
+  var AFFINE_ROW_TOLERANCE = 1e-6;
+  var DISTORTION_MODELS$1 = [
+  	"none",
+  	"brown-conrady",
+  	"kannala-brandt"
+  ];
+  var RESIZE_MODES = ["none", "crop-and-scale"];
+  var FOCUS_MODES = [
+  	"none",
+  	"manual",
+  	"single-shot",
+  	"continuous"
+  ];
+  /**
+  * Coefficient counts each model accepts.
+  *
+  * The Brown-Conrady lengths are the OpenCV sets that consumers already handle: four, the usual five
+  * with k3, and eight for the rational model. Longer OpenCV vectors (thin prism, tilted sensor) are
+  * rejected rather than carried, because no consumer in this family implements them and a profile
+  * that is accepted but only partly applied is worse than one that is refused.
+  */
+  var DISTORTION_COEFFICIENT_LENGTHS = {
+  	none: [0],
+  	"brown-conrady": [
+  		4,
+  		5,
+  		8
+  	],
+  	"kannala-brandt": [4]
+  };
+  /**
+  * Key names that carry pairing or authentication material.
+  *
+  * Signaling data is short-lived session state and a calibration profile is a document operators keep
+  * and copy between venues. Rejecting the whole document is deliberate: a profile that reached here
+  * carrying an SDP is evidence that something upstream is mixing the two, and quietly stripping the
+  * key would hide that.
+  */
+  var FORBIDDEN_KEYS = /* @__PURE__ */ new Set([
+  	"accesstoken",
+  	"answer",
+  	"apikey",
+  	"authorization",
+  	"candidate",
+  	"credential",
+  	"credentials",
+  	"ice",
+  	"icecandidate",
+  	"offer",
+  	"passphrase",
+  	"password",
+  	"secret",
+  	"sdp",
+  	"token"
+  ]);
+  var ProfileRejection = class extends Error {
+  	constructor(detail) {
+  		super(detail.message);
+  		this.name = "ProfileRejection";
+  		this.detail = detail;
+  	}
+  };
+  function reject(code, path, message) {
+  	throw new ProfileRejection({
+  		code,
+  		path,
+  		message
+  	});
+  }
+  function isRecord$1(value) {
+  	return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+  function member$1(path, name) {
+  	return path.length === 0 ? name : `${path}.${name}`;
+  }
+  /** Normalizes a key so `ICE-Candidate`, `iceCandidate` and `ice_candidate` all match one entry. */
+  function comparableKey(key) {
+  	return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+  function assertNoForbiddenKeys(value, path, depth, seen) {
+  	if (depth > MAXIMUM_SCAN_DEPTH) reject("invalid-value", path, "The document is nested more deeply than a profile ever is.");
+  	if (typeof value !== "object" || value === null) return;
+  	if (seen.has(value)) reject("invalid-value", path, "The document contains a cycle.");
+  	seen.add(value);
+  	if (Array.isArray(value)) {
+  		value.forEach((item, index) => assertNoForbiddenKeys(item, `${path}[${index}]`, depth + 1, seen));
+  		return;
+  	}
+  	for (const [key, child] of Object.entries(value)) {
+  		if (FORBIDDEN_KEYS.has(comparableKey(key))) reject("forbidden-field", member$1(path, key), "Pairing and authentication material must not travel inside a calibration profile.");
+  		assertNoForbiddenKeys(child, member$1(path, key), depth + 1, seen);
+  	}
+  }
+  function requireRecord$1(value, path) {
+  	if (!isRecord$1(value)) reject(path.length === 0 ? "not-an-object" : "invalid-type", path, "Expected an object.");
+  	return value;
+  }
+  /** Rejects unknown members as well as missing ones, so an unrecognized field is never ignored. */
+  function requireExactKeys(record, path, required, optional = []) {
+  	const known = /* @__PURE__ */ new Set([...required, ...optional]);
+  	for (const key of Object.keys(record)) if (!known.has(key)) reject("unexpected-field", member$1(path, key), "Unknown member.");
+  	for (const key of required) if (!(key in record)) reject("missing-field", member$1(path, key), "Required member is missing.");
+  }
+  function requireText(value, path) {
+  	if (typeof value !== "string") reject("invalid-type", path, "Expected a string.");
+  	if (value.length === 0 || value.length > MAXIMUM_TEXT_LENGTH) reject("out-of-range", path, `Expected between 1 and ${MAXIMUM_TEXT_LENGTH} characters.`);
+  	return value;
+  }
+  function requireIdentifier(value, path) {
+  	const text = requireText(value, path);
+  	if (!IDENTIFIER_PATTERN.test(text)) reject("invalid-value", path, "Expected letters, digits, dot, underscore, colon or hyphen.");
+  	return text;
+  }
+  function requireUtcTimestamp(value, path) {
+  	const text = requireText(value, path);
+  	if (!UTC_TIMESTAMP_PATTERN.test(text) || !Number.isFinite(Date.parse(text))) reject("invalid-value", path, "Expected an RFC 3339 timestamp in UTC, such as 2026-09-15T04:05:06Z.");
+  	return text;
+  }
+  function requireBoolean(value, path) {
+  	if (typeof value !== "boolean") reject("invalid-type", path, "Expected a boolean.");
+  	return value;
+  }
+  function requireFinite(value, path) {
+  	if (typeof value !== "number") reject("invalid-type", path, "Expected a number.");
+  	if (!Number.isFinite(value)) reject("invalid-value", path, "Expected a finite number.");
+  	return value;
+  }
+  function requireInteger(value, path, minimum, maximum) {
+  	const numeric = requireFinite(value, path);
+  	if (!Number.isInteger(numeric)) reject("invalid-value", path, "Expected an integer.");
+  	if (numeric < minimum || numeric > maximum) reject("out-of-range", path, `Expected between ${minimum} and ${maximum}.`);
+  	return numeric;
+  }
+  function requireBounded(value, path, minimum, maximum) {
+  	const numeric = requireFinite(value, path);
+  	if (numeric < minimum || numeric > maximum) reject("out-of-range", path, `Expected between ${minimum} and ${maximum}.`);
+  	return numeric;
+  }
+  function requireLiteral(value, path, expected, code) {
+  	if (value !== expected) reject(code, path, `Expected ${JSON.stringify(expected)}.`);
+  	return expected;
+  }
+  function readImage(value, path) {
+  	const record = requireRecord$1(value, path);
+  	requireExactKeys(record, path, [
+  		"width",
+  		"height",
+  		"undistorted"
+  	]);
+  	return {
+  		width: requireInteger(record["width"], member$1(path, "width"), 1, MAXIMUM_IMAGE_EDGE),
+  		height: requireInteger(record["height"], member$1(path, "height"), 1, MAXIMUM_IMAGE_EDGE),
+  		undistorted: requireBoolean(record["undistorted"], member$1(path, "undistorted"))
+  	};
+  }
+  /**
+  * Reads the pinhole parameters.
+  *
+  * The principal point is allowed to sit outside the frame — a cropped or shifted sensor puts it
+  * there legitimately — but not arbitrarily far, because a principal point far outside the image is
+  * the signature of values given in the wrong unit rather than of an unusual lens.
+  */
+  function readIntrinsics(value, path, image) {
+  	const record = requireRecord$1(value, path);
+  	requireExactKeys(record, path, [
+  		"fx",
+  		"fy",
+  		"cx",
+  		"cy",
+  		"skew"
+  	]);
+  	return {
+  		fx: requireBounded(record["fx"], member$1(path, "fx"), Number.MIN_VALUE, MAXIMUM_PIXEL_MAGNITUDE),
+  		fy: requireBounded(record["fy"], member$1(path, "fy"), Number.MIN_VALUE, MAXIMUM_PIXEL_MAGNITUDE),
+  		cx: requireBounded(record["cx"], member$1(path, "cx"), -image.width, image.width * 2),
+  		cy: requireBounded(record["cy"], member$1(path, "cy"), -image.height, image.height * 2),
+  		skew: requireBounded(record["skew"], member$1(path, "skew"), -1e7, MAXIMUM_PIXEL_MAGNITUDE)
+  	};
+  }
+  function readDistortion$1(value, path) {
+  	const record = requireRecord$1(value, path);
+  	requireExactKeys(record, path, ["model", "coefficients"]);
+  	const modelPath = member$1(path, "model");
+  	const rawModel = record["model"];
+  	if (typeof rawModel !== "string" || !DISTORTION_MODELS$1.includes(rawModel)) reject("invalid-distortion", modelPath, `Expected one of ${DISTORTION_MODELS$1.join(", ")}.`);
+  	const model = rawModel;
+  	const coefficientsPath = member$1(path, "coefficients");
+  	const rawCoefficients = record["coefficients"];
+  	if (!Array.isArray(rawCoefficients)) reject("invalid-type", coefficientsPath, "Expected an array.");
+  	const allowed = DISTORTION_COEFFICIENT_LENGTHS[model];
+  	if (!allowed.includes(rawCoefficients.length)) reject("invalid-distortion", coefficientsPath, `The ${model} model takes ${allowed.join(" or ")} coefficients, not ${rawCoefficients.length}.`);
+  	return {
+  		model,
+  		coefficients: rawCoefficients.map((coefficient, index) => requireBounded(coefficient, `${coefficientsPath}[${index}]`, -1e4, MAXIMUM_DISTORTION_MAGNITUDE))
+  	};
+  }
+  function requireEnum(value, path, allowed) {
+  	const text = requireText(value, path);
+  	if (!allowed.includes(text)) reject("invalid-value", path, `Expected one of ${allowed.join(", ")}.`);
+  	return text;
+  }
+  function readCapture(value, path) {
+  	const record = requireRecord$1(value, path);
+  	requireExactKeys(record, path, [], [
+  		"frameRate",
+  		"facingMode",
+  		"resizeMode",
+  		"zoom",
+  		"focusMode",
+  		"focusDistance"
+  	]);
+  	const read = (name, reader) => name in record ? reader(record[name], member$1(path, name)) : void 0;
+  	const frameRate = read("frameRate", (raw, at) => requireBounded(raw, at, Number.MIN_VALUE, MAXIMUM_FRAME_RATE));
+  	const facingMode = read("facingMode", requireText);
+  	const resizeMode = read("resizeMode", (raw, at) => requireEnum(raw, at, RESIZE_MODES));
+  	const zoom = read("zoom", (raw, at) => requireBounded(raw, at, Number.MIN_VALUE, MAXIMUM_ZOOM));
+  	const focusMode = read("focusMode", (raw, at) => requireEnum(raw, at, FOCUS_MODES));
+  	const focusDistance = read("focusDistance", (raw, at) => requireBounded(raw, at, 0, MAXIMUM_FOCUS_DISTANCE));
+  	return {
+  		...frameRate === void 0 ? {} : { frameRate },
+  		...facingMode === void 0 ? {} : { facingMode },
+  		...resizeMode === void 0 ? {} : { resizeMode },
+  		...zoom === void 0 ? {} : { zoom },
+  		...focusMode === void 0 ? {} : { focusMode },
+  		...focusDistance === void 0 ? {} : { focusDistance }
+  	};
+  }
+  function readQuality(value, path) {
+  	const record = requireRecord$1(value, path);
+  	requireExactKeys(record, path, ["sampleCount", "reprojectionErrorPx"]);
+  	return {
+  		sampleCount: requireInteger(record["sampleCount"], member$1(path, "sampleCount"), 1, MAXIMUM_SAMPLE_COUNT),
+  		reprojectionErrorPx: requireBounded(record["reprojectionErrorPx"], member$1(path, "reprojectionErrorPx"), 0, MAXIMUM_REPROJECTION_ERROR_PX)
+  	};
+  }
+  function readDevice(value, path) {
+  	const record = requireRecord$1(value, path);
+  	requireExactKeys(record, path, [], ["label", "deviceId"]);
+  	const label = "label" in record ? requireText(record["label"], member$1(path, "label")) : void 0;
+  	const deviceId = "deviceId" in record ? requireText(record["deviceId"], member$1(path, "deviceId")) : void 0;
+  	return {
+  		...label === void 0 ? {} : { label },
+  		...deviceId === void 0 ? {} : { deviceId }
+  	};
+  }
+  function readProfile(input) {
+  	assertNoForbiddenKeys(input, "", 0, /* @__PURE__ */ new WeakSet());
+  	const record = requireRecord$1(input, "");
+  	requireLiteral(record["schema"], "schema", CAMERA_INTRINSIC_PROFILE_SCHEMA, "unsupported-schema");
+  	requireLiteral(record["version"], "version", 1, "unsupported-version");
+  	requireExactKeys(record, "", [
+  		"schema",
+  		"version",
+  		"profileId",
+  		"cameraId",
+  		"calibratedAt",
+  		"producer",
+  		"cameraModel",
+  		"image",
+  		"intrinsics",
+  		"distortion"
+  	], [
+  		"capture",
+  		"quality",
+  		"device"
+  	]);
+  	const image = readImage(record["image"], "image");
+  	const distortion = readDistortion$1(record["distortion"], "distortion");
+  	if (image.undistorted && distortion.model !== "none") reject("inconsistent-profile", "distortion.model", "A profile for an already undistorted image cannot also carry distortion coefficients.");
+  	const capture = "capture" in record ? readCapture(record["capture"], "capture") : void 0;
+  	const quality = "quality" in record ? readQuality(record["quality"], "quality") : void 0;
+  	const device = "device" in record ? readDevice(record["device"], "device") : void 0;
+  	return {
+  		schema: CAMERA_INTRINSIC_PROFILE_SCHEMA,
+  		version: 1,
+  		profileId: requireIdentifier(record["profileId"], "profileId"),
+  		cameraId: requireIdentifier(record["cameraId"], "cameraId"),
+  		calibratedAt: requireUtcTimestamp(record["calibratedAt"], "calibratedAt"),
+  		producer: requireText(record["producer"], "producer"),
+  		cameraModel: requireLiteral(record["cameraModel"], "cameraModel", "pinhole", "invalid-value"),
+  		image,
+  		intrinsics: readIntrinsics(record["intrinsics"], "intrinsics", image),
+  		distortion,
+  		...capture === void 0 ? {} : { capture },
+  		...quality === void 0 ? {} : { quality },
+  		...device === void 0 ? {} : { device }
+  	};
+  }
+  function toResult(read) {
+  	try {
+  		return {
+  			ok: true,
+  			profile: read()
+  		};
+  	} catch (error) {
+  		if (error instanceof ProfileRejection) return {
+  			ok: false,
+  			error: error.detail
+  		};
+  		throw error;
+  	}
+  }
+  /**
+  * Reads whichever profile format a document is written in.
+  *
+  * An operator holding a file does not know, and should not have to know, which of two schemas it
+  * uses; they know they calibrated this camera once and kept the result. Dispatching on the document
+  * itself means one entry point accepts both, and the profile that comes out records where it came
+  * from in `producer`, so nothing about the conversion is hidden.
+  *
+  * Only the declared schema decides. A document that says nothing recognizable is refused by the
+  * current parser, which names what it expected.
+  */
+  function readCameraProfileDocument(input) {
+  	if (isRecord$1(input) && input["schema"] === "twrmc/camera-calibration") return adoptLegacyCameraCalibration(input);
+  	return parseCameraIntrinsicProfile(input);
+  }
+  /** Validates a parsed document and returns a normalized profile, or the reason it was refused. */
+  function parseCameraIntrinsicProfile(input) {
+  	return toResult(() => readProfile(input));
+  }
+  function readLegacyMatrixRow(matrix, offset, expected) {
+  	expected.forEach((value, index) => {
+  		const actual = requireFinite(matrix[offset + index], `intrinsicMatrix[${offset + index}]`);
+  		if (Math.abs(actual - value) > AFFINE_ROW_TOLERANCE) reject("inconsistent-profile", `intrinsicMatrix[${offset + index}]`, `Expected ${value} in the intrinsic matrix; the value read as ${actual}.`);
+  	});
+  }
+  /**
+  * Converts a `twrmc/camera-calibration` v1 document into this contract.
+  *
+  * The world pose the old format carried is deliberately dropped. It was the extrinsic of whichever
+  * calibration sample happened to be last, so treating it as a placement in a shared world frame puts
+  * a camera somewhere it has never been. Placement belongs to whoever solves it against a common
+  * reference, and a profile that simply lacks it is honest about what it knows.
+  *
+  * Quality is dropped for the same reason: the old format recorded none, and inventing a sample count
+  * or a reprojection error would turn "unknown" into a measurement.
+  */
+  function adoptLegacyCameraCalibration(input) {
+  	return toResult(() => {
+  		assertNoForbiddenKeys(input, "", 0, /* @__PURE__ */ new WeakSet());
+  		const record = requireRecord$1(input, "");
+  		requireLiteral(record["schema"], "schema", LEGACY_CALIBRATION_SCHEMA, "unsupported-schema");
+  		requireLiteral(record["version"], "version", 1, "unsupported-version");
+  		requireExactKeys(record, "", [
+  			"schema",
+  			"version",
+  			"calibrationId",
+  			"cameraId",
+  			"imageWidth",
+  			"imageHeight",
+  			"intrinsicMatrix",
+  			"distortionCoefficients",
+  			"calibratedAt"
+  		], ["worldFromCameraMatrix", "worldUnit"]);
+  		const matrix = record["intrinsicMatrix"];
+  		if (!Array.isArray(matrix) || matrix.length !== 9) reject("invalid-value", "intrinsicMatrix", "Expected nine numbers in row-major order.");
+  		readLegacyMatrixRow(matrix, 3, [0]);
+  		readLegacyMatrixRow(matrix, 6, [
+  			0,
+  			0,
+  			1
+  		]);
+  		const rawCoefficients = record["distortionCoefficients"];
+  		if (!Array.isArray(rawCoefficients)) reject("invalid-type", "distortionCoefficients", "Expected an array.");
+  		const model = rawCoefficients.length === 0 ? "none" : "brown-conrady";
+  		return readProfile({
+  			schema: CAMERA_INTRINSIC_PROFILE_SCHEMA,
+  			version: 1,
+  			profileId: record["calibrationId"],
+  			cameraId: record["cameraId"],
+  			calibratedAt: record["calibratedAt"],
+  			producer: `${LEGACY_CALIBRATION_SCHEMA} v1`,
+  			cameraModel: "pinhole",
+  			image: {
+  				width: record["imageWidth"],
+  				height: record["imageHeight"],
+  				undistorted: false
+  			},
+  			intrinsics: {
+  				fx: matrix[0],
+  				fy: matrix[4],
+  				cx: matrix[2],
+  				cy: matrix[5],
+  				skew: matrix[1]
+  			},
+  			distortion: {
+  				model,
+  				coefficients: rawCoefficients
+  			}
+  		});
+  	});
+  }
+  //#endregion
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/yaml.js
+  /**
+  * The part of YAML that camera calibration files are written in.
+  *
+  * ROS `camera_info` files come out of yaml-cpp's emitter, PyYAML's `dump`, and people's editors, so
+  * the reader accepts what those produce: block mappings, block and flow sequences, flow mappings,
+  * plain and quoted scalars, comments, and a `%YAML` directive or `---` marker. It refuses what a
+  * calibration never needs and a careless reader gets wrong -- anchors and aliases, tags, block
+  * scalars, several documents in one file -- by name, rather than guessing.
+  *
+  * Hand-written for the same reason the profile validator is: a YAML library is larger than this whole
+  * extension, and every extension that needs a camera loads this bundle.
+  */
+  var YamlError = class extends Error {
+  	constructor(message, line) {
+  		super(line > 0 ? `Line ${line}: ${message}` : message);
+  		this.name = "YamlError";
+  		this.line = line;
+  	}
+  };
+  var MAXIMUM_DEPTH = 16;
+  var MAXIMUM_LENGTH = 65536;
+  function parseYaml(source) {
+  	if (source.length > MAXIMUM_LENGTH) throw new YamlError("The document is longer than a calibration file ever is.", 0);
+  	const lines = splitLines(source);
+  	if (lines.length === 0) throw new YamlError("The document is empty.", 0);
+  	const reader = new BlockReader(lines);
+  	const value = reader.readBlock(lines[0].indent, 0);
+  	if (!reader.done()) throw new YamlError("Unexpected indentation.", reader.peek().number);
+  	return value;
+  }
+  function splitLines(source) {
+  	const lines = [];
+  	let started = false;
+  	source.replace(/^\uFEFF/, "").split(/\r\n|\r|\n/).forEach((raw, index) => {
+  		const number = index + 1;
+  		if (/\t/.test(raw.match(/^\s*/)[0])) throw new YamlError("Tabs cannot indent YAML.", number);
+  		const text = stripComment(raw).trimEnd();
+  		const content = text.trimStart();
+  		if (content.length === 0) return;
+  		if (!started && content.startsWith("%")) return;
+  		if (content === "---" || content.startsWith("--- ")) {
+  			if (started) throw new YamlError("Only one document is read from a calibration file.", number);
+  			started = true;
+  			const rest = content.slice(3).trim();
+  			if (rest.length > 0) lines.push({
+  				number,
+  				indent: 0,
+  				text: rest
+  			});
+  			return;
+  		}
+  		if (content === "...") {
+  			started = true;
+  			return;
+  		}
+  		started = true;
+  		lines.push({
+  			number,
+  			indent: text.length - content.length,
+  			text: content
+  		});
+  	});
+  	return lines;
+  }
+  /** Removes a `#` comment that is not inside quotes. A `#` only starts one after whitespace. */
+  function stripComment(raw) {
+  	let quote;
+  	for (let index = 0; index < raw.length; index += 1) {
+  		const character = raw[index];
+  		if (quote) {
+  			if (character === "\\" && quote === "\"") index += 1;
+  			else if (character === quote) quote = void 0;
+  			continue;
+  		}
+  		if (character === "\"" || character === "'") quote = character;
+  		else if (character === "#" && (index === 0 || /\s/.test(raw[index - 1]))) return raw.slice(0, index);
+  	}
+  	return raw;
+  }
+  var BlockReader = class {
+  	constructor(lines) {
+  		this.lines = lines;
+  		this.index = 0;
+  	}
+  	done() {
+  		return this.index >= this.lines.length;
+  	}
+  	peek() {
+  		return this.lines[this.index];
+  	}
+  	readBlock(indent, depth) {
+  		if (depth > MAXIMUM_DEPTH) throw new YamlError("The document is nested too deeply.", this.peek()?.number ?? 0);
+  		const first = this.peek();
+  		if (!first) throw new YamlError("Expected a value.", 0);
+  		if (first.text === "-" || first.text.startsWith("- ")) return this.readSequence(indent, depth);
+  		if (findMappingColon(first.text) >= 0) return this.readMapping(indent, depth);
+  		this.index += 1;
+  		return this.readInline(first.text, first.number, first.indent);
+  	}
+  	readMapping(indent, depth) {
+  		const mapping = {};
+  		while (!this.done()) {
+  			const line = this.peek();
+  			if (line.indent < indent) break;
+  			if (line.indent > indent) throw new YamlError("Unexpected indentation.", line.number);
+  			const colon = findMappingColon(line.text);
+  			if (colon < 0) throw new YamlError("Expected a \"key: value\" pair.", line.number);
+  			const key = readKey(line.text.slice(0, colon).trim(), line.number);
+  			if (Object.prototype.hasOwnProperty.call(mapping, key)) throw new YamlError(`The key "${key}" appears twice.`, line.number);
+  			const rest = line.text.slice(colon + 1).trim();
+  			this.index += 1;
+  			if (rest.length > 0) {
+  				mapping[key] = this.readInline(rest, line.number, line.indent);
+  				continue;
+  			}
+  			const next = this.peek();
+  			const nestedSequence = next !== void 0 && next.indent === indent && (next.text === "-" || next.text.startsWith("- "));
+  			if (next === void 0 || next.indent <= indent && !nestedSequence) mapping[key] = null;
+  			else mapping[key] = this.readBlock(next.indent, depth + 1);
+  		}
+  		return mapping;
+  	}
+  	readSequence(indent, depth) {
+  		const sequence = [];
+  		while (!this.done()) {
+  			const line = this.peek();
+  			if (line.indent < indent || !(line.text === "-" || line.text.startsWith("- "))) break;
+  			if (line.indent > indent) throw new YamlError("Unexpected indentation.", line.number);
+  			const rest = line.text.slice(1).trim();
+  			this.index += 1;
+  			if (rest.length === 0) {
+  				const next = this.peek();
+  				sequence.push(next !== void 0 && next.indent > indent ? this.readBlock(next.indent, depth + 1) : null);
+  			} else if (findMappingColon(rest) >= 0 && !/^[[{"']/.test(rest)) throw new YamlError("A mapping inside a block sequence is not part of a calibration file.", line.number);
+  			else sequence.push(this.readInline(rest, line.number, line.indent));
+  		}
+  		return sequence;
+  	}
+  	/**
+  	* Reads a value that starts on one line. A flow collection may continue on the lines after it, as
+  	* PyYAML writes long matrices, so those lines are drawn in until the brackets balance.
+  	*/
+  	readInline(text, number, indent) {
+  		if (text.startsWith("[") || text.startsWith("{")) {
+  			let joined = text;
+  			while (!flowClosed(joined)) {
+  				const next = this.peek();
+  				if (!next || next.indent <= indent) throw new YamlError("A bracket is never closed.", number);
+  				joined += ` ${next.text}`;
+  				this.index += 1;
+  			}
+  			const flow = new FlowReader(joined, number);
+  			const value = flow.readValue(0);
+  			flow.expectEnd();
+  			return value;
+  		}
+  		return readScalar(text, number);
+  	}
+  };
+  /** Where the `: ` separating a key from its value is, or -1. Colons inside quotes do not count. */
+  function findMappingColon(text) {
+  	let quote;
+  	for (let index = 0; index < text.length; index += 1) {
+  		const character = text[index];
+  		if (quote) {
+  			if (character === "\\" && quote === "\"") index += 1;
+  			else if (character === quote) quote = void 0;
+  			continue;
+  		}
+  		if (index === 0 && (character === "[" || character === "{")) return -1;
+  		if (character === "\"" || character === "'") quote = character;
+  		else if (character === ":" && (index === text.length - 1 || text[index + 1] === " ")) return index;
+  	}
+  	return -1;
+  }
+  function flowClosed(text) {
+  	let depth = 0;
+  	let quote;
+  	for (let index = 0; index < text.length; index += 1) {
+  		const character = text[index];
+  		if (quote) {
+  			if (character === "\\" && quote === "\"") index += 1;
+  			else if (character === quote) quote = void 0;
+  			continue;
+  		}
+  		if (character === "\"" || character === "'") quote = character;
+  		else if (character === "[" || character === "{") depth += 1;
+  		else if (character === "]" || character === "}") depth -= 1;
+  	}
+  	return depth <= 0;
+  }
+  function readKey(text, number) {
+  	const value = readScalar(text, number);
+  	if (typeof value !== "string") return String(value);
+  	return value;
+  }
+  var FlowReader = class {
+  	constructor(text, number) {
+  		this.text = text;
+  		this.number = number;
+  		this.index = 0;
+  	}
+  	readValue(depth) {
+  		if (depth > MAXIMUM_DEPTH) throw new YamlError("The document is nested too deeply.", this.number);
+  		this.skipSpace();
+  		const character = this.text[this.index];
+  		if (character === "[") return this.readSequence(depth);
+  		if (character === "{") return this.readMapping(depth);
+  		return readScalar(this.readToken(), this.number);
+  	}
+  	expectEnd() {
+  		this.skipSpace();
+  		if (this.index < this.text.length) throw new YamlError("Unexpected text after a closing bracket.", this.number);
+  	}
+  	readSequence(depth) {
+  		this.index += 1;
+  		const sequence = [];
+  		this.skipSpace();
+  		if (this.text[this.index] === "]") {
+  			this.index += 1;
+  			return sequence;
+  		}
+  		for (;;) {
+  			sequence.push(this.readValue(depth + 1));
+  			this.skipSpace();
+  			const separator = this.text[this.index];
+  			this.index += 1;
+  			if (separator === "]") return sequence;
+  			if (separator !== ",") throw new YamlError("Expected \",\" or \"]\" in a sequence.", this.number);
+  			this.skipSpace();
+  			if (this.text[this.index] === "]") {
+  				this.index += 1;
+  				return sequence;
+  			}
+  		}
+  	}
+  	readMapping(depth) {
+  		this.index += 1;
+  		const mapping = {};
+  		this.skipSpace();
+  		if (this.text[this.index] === "}") {
+  			this.index += 1;
+  			return mapping;
+  		}
+  		for (;;) {
+  			this.skipSpace();
+  			const key = readKey(this.readToken(":"), this.number);
+  			this.skipSpace();
+  			if (this.text[this.index] !== ":") throw new YamlError("Expected \":\" after a key.", this.number);
+  			this.index += 1;
+  			if (Object.prototype.hasOwnProperty.call(mapping, key)) throw new YamlError(`The key "${key}" appears twice.`, this.number);
+  			mapping[key] = this.readValue(depth + 1);
+  			this.skipSpace();
+  			const separator = this.text[this.index];
+  			this.index += 1;
+  			if (separator === "}") return mapping;
+  			if (separator !== ",") throw new YamlError("Expected \",\" or \"}\" in a mapping.", this.number);
+  			this.skipSpace();
+  			if (this.text[this.index] === "}") {
+  				this.index += 1;
+  				return mapping;
+  			}
+  		}
+  	}
+  	/** A quoted string, or plain text up to the next flow delimiter. */
+  	readToken(stopAlso = "") {
+  		this.skipSpace();
+  		const start = this.index;
+  		const character = this.text[this.index];
+  		if (character === "\"" || character === "'") {
+  			this.index += 1;
+  			while (this.index < this.text.length) {
+  				const current = this.text[this.index];
+  				if (current === "\\" && character === "\"") {
+  					this.index += 2;
+  					continue;
+  				}
+  				if (current === character) {
+  					if (character === "'" && this.text[this.index + 1] === "'") {
+  						this.index += 2;
+  						continue;
+  					}
+  					this.index += 1;
+  					return this.text.slice(start, this.index);
+  				}
+  				this.index += 1;
+  			}
+  			throw new YamlError("A quoted string is never closed.", this.number);
+  		}
+  		while (this.index < this.text.length && !`,]}${stopAlso}`.includes(this.text[this.index])) this.index += 1;
+  		return this.text.slice(start, this.index).trim();
+  	}
+  	skipSpace() {
+  		while (this.index < this.text.length && /\s/.test(this.text[this.index])) this.index += 1;
+  	}
+  };
+  var INTEGER = /^[-+]?(?:0|[1-9][0-9_]*)$/;
+  var FLOAT = /^[-+]?(?:[0-9][0-9_]*)?\.?[0-9]*(?:[eE][-+]?[0-9]+)?$/;
+  function readScalar(text, number) {
+  	const value = text.trim();
+  	if (value.length === 0) return null;
+  	const first = value[0];
+  	if (first === "\"") return readDoubleQuoted(value, number);
+  	if (first === "'") {
+  		if (value.length < 2 || !value.endsWith("'")) throw new YamlError("A quoted string is never closed.", number);
+  		return value.slice(1, -1).replace(/''/g, "'");
+  	}
+  	if (first === "&" || first === "*") throw new YamlError("Anchors and aliases are not read.", number);
+  	if (first === "!") throw new YamlError("Tags are not read.", number);
+  	if (first === "|" || first === ">") throw new YamlError("Block scalars are not read.", number);
+  	if (first === "@" || first === "`") throw new YamlError(`A plain value cannot start with "${first}".`, number);
+  	if (value === "~" || value === "null" || value === "Null" || value === "NULL") return null;
+  	if (value === "true" || value === "True" || value === "TRUE") return true;
+  	if (value === "false" || value === "False" || value === "FALSE") return false;
+  	if (/^[-+]?\.(?:inf|Inf|INF|nan|NaN|NAN)$/.test(value)) throw new YamlError("Infinity and NaN are not calibration values.", number);
+  	if (INTEGER.test(value)) return Number(value.replace(/_/g, ""));
+  	if (/[0-9]/.test(value) && FLOAT.test(value)) {
+  		const parsed = Number(value.replace(/_/g, ""));
+  		if (Number.isFinite(parsed)) return parsed;
+  	}
+  	return value;
+  }
+  function readDoubleQuoted(value, number) {
+  	if (value.length < 2 || !value.endsWith("\"")) throw new YamlError("A quoted string is never closed.", number);
+  	const body = value.slice(1, -1);
+  	let result = "";
+  	for (let index = 0; index < body.length; index += 1) {
+  		const character = body[index];
+  		if (character !== "\\") {
+  			result += character;
+  			continue;
+  		}
+  		const escape = body[index + 1];
+  		index += 1;
+  		switch (escape) {
+  			case "\"":
+  			case "\\":
+  			case "/":
+  				result += escape;
+  				break;
+  			case "n":
+  				result += "\n";
+  				break;
+  			case "t":
+  				result += "	";
+  				break;
+  			case "r":
+  				result += "\r";
+  				break;
+  			case "0":
+  				result += "\0";
+  				break;
+  			case "u": {
+  				const hex = body.slice(index + 1, index + 5);
+  				if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw new YamlError("Invalid \\u escape.", number);
+  				result += String.fromCharCode(parseInt(hex, 16));
+  				index += 4;
+  				break;
+  			}
+  			default: throw new YamlError(`Unsupported escape "\\${escape ?? ""}".`, number);
+  		}
+  	}
+  	return result;
+  }
+  //#endregion
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/camera-info.js
+  /**
+  * The file a calibration is exchanged in: a ROS `camera_info` YAML document.
+  *
+  * The profile contract is how this extension holds a calibration; it is not a format anyone outside
+  * this family reads. A file an operator carries between machines is better written in the format
+  * the tools they will meet already read, and for one camera's intrinsics that is the YAML that
+  * ROS's `camera_calibration_parsers` reads and writes -- OpenCV-based pipelines, ROS and ROS 2
+  * drivers, and SLAM tools load it as it is.
+  *
+  * ROS carries what projection needs and nothing about when or how the camera was configured, which
+  * is exactly what deciding whether a profile still fits requires. Those members travel in one extra
+  * top-level mapping, `turbowarp_camera_source`, named after their owner. ROS's reader looks keys up
+  * by name and never enumerates the document, so a file with the extra mapping still loads there,
+  * and a file without it is still ROS.
+  *
+  * A file that lacks the mapping altogether cannot become a profile: when it was calibrated and which
+  * run it was are required members, and inventing either would turn "unknown" into a record.
+  */
+  /** The top-level key holding the members ROS has no place for. */
+  var CAMERA_INFO_EXTENSION_KEY = "turbowarp_camera_source";
+  var MATRIX_TOLERANCE = 1e-6;
+  /**
+  * Every top-level key a ROS file may have, and the extra mapping.
+  *
+  * Anything else is refused rather than dropped. A calibration file that carries a key nobody reads
+  * is either from a tool that means something by it or has had something pasted into it, and a
+  * profile validator that fails closed does not start ignoring members because they arrived in YAML.
+  */
+  var ROOT_KEYS = /* @__PURE__ */ new Set([
+  	"image_width",
+  	"image_height",
+  	"camera_name",
+  	"camera_matrix",
+  	"distortion_model",
+  	"distortion_coefficients",
+  	"rectification_matrix",
+  	"projection_matrix",
+  	"binning_x",
+  	"binning_y",
+  	"roi",
+  	CAMERA_INFO_EXTENSION_KEY
+  ]);
+  /** ROS distortion model names, as `sensor_msgs/distortion_models.hpp` spells them. */
+  var PLUMB_BOB = "plumb_bob";
+  var RATIONAL_POLYNOMIAL = "rational_polynomial";
+  var EQUIDISTANT = "equidistant";
+  var CameraInfoRejection = class extends Error {
+  	constructor(detail) {
+  		super(detail.message);
+  		this.detail = detail;
+  	}
+  };
+  function refuse(code, path, message) {
+  	throw new CameraInfoRejection({
+  		code,
+  		path,
+  		message
+  	});
+  }
+  /**
+  * Turns a ROS `camera_info` YAML document into a profile document, ready to be validated.
+  *
+  * Only the shape ROS defines is checked here -- matrix sizes, the fixed entries of the calibration
+  * matrix, a rectification that does nothing, a distortion model ROS names. Everything the profile
+  * contract says about the values themselves is left to the profile validator, so there is one
+  * place that decides whether a calibration is acceptable.
+  */
+  function readCameraInfoYaml(text) {
+  	let parsed;
+  	try {
+  		parsed = parseYaml(text);
+  	} catch (error) {
+  		if (error instanceof YamlError) return {
+  			ok: false,
+  			error: {
+  				code: "not-an-object",
+  				path: "",
+  				message: `The profile is not valid YAML. ${error.message}`
+  			}
+  		};
+  		throw error;
+  	}
+  	try {
+  		return {
+  			ok: true,
+  			document: toProfileDocument(parsed)
+  		};
+  	} catch (error) {
+  		if (error instanceof CameraInfoRejection) return {
+  			ok: false,
+  			error: error.detail
+  		};
+  		throw error;
+  	}
+  }
+  function toProfileDocument(parsed) {
+  	const root = record(parsed, "");
+  	for (const key of Object.keys(root)) if (!ROOT_KEYS.has(key)) refuse("unexpected-field", key, "Unknown member.");
+  	readBinningAndRoi(root);
+  	const width = root["image_width"];
+  	const height = root["image_height"];
+  	if (width === void 0) refuse("missing-field", "image_width", "Required member is missing.");
+  	if (height === void 0) refuse("missing-field", "image_height", "Required member is missing.");
+  	const k = readMatrix(root, "camera_matrix", 3, 3);
+  	expectEntries(k, "camera_matrix", [
+  		[3, 0],
+  		[6, 0],
+  		[7, 0],
+  		[8, 1]
+  	]);
+  	if ("rectification_matrix" in root) expectEntries(readMatrix(root, "rectification_matrix", 3, 3), "rectification_matrix", [
+  		1,
+  		0,
+  		0,
+  		0,
+  		1,
+  		0,
+  		0,
+  		0,
+  		1
+  	].map((value, index) => [index, value]), "A rectification other than identity belongs to a stereo pair, not to one camera's intrinsics.");
+  	if ("projection_matrix" in root) readMatrix(root, "projection_matrix", 3, 4);
+  	const distortion = readDistortion(root);
+  	const extension = root[CAMERA_INFO_EXTENSION_KEY];
+  	if (extension === void 0) refuse("missing-field", CAMERA_INFO_EXTENSION_KEY, "The file is a ROS camera_info document without the calibration record: when it was calibrated and under which camera settings are not known.");
+  	const extra = record(extension, CAMERA_INFO_EXTENSION_KEY);
+  	const known = /* @__PURE__ */ new Set([
+  		"schema",
+  		"version",
+  		"profileId",
+  		"calibratedAt",
+  		"producer",
+  		"undistorted",
+  		"capture",
+  		"quality",
+  		"device"
+  	]);
+  	for (const key of Object.keys(extra)) if (!known.has(key)) refuse("unexpected-field", `${CAMERA_INFO_EXTENSION_KEY}.${key}`, "Unknown member.");
+  	if (extra["schema"] !== "twcs/camera-intrinsics") refuse("unsupported-schema", `${CAMERA_INFO_EXTENSION_KEY}.schema`, `Expected ${JSON.stringify(CAMERA_INTRINSIC_PROFILE_SCHEMA)}.`);
+  	if (extra["version"] !== 1) refuse("unsupported-version", `${CAMERA_INFO_EXTENSION_KEY}.version`, `Expected 1.`);
+  	const undistorted = extra["undistorted"] ?? false;
+  	return {
+  		schema: CAMERA_INTRINSIC_PROFILE_SCHEMA,
+  		version: 1,
+  		profileId: extra["profileId"],
+  		cameraId: root["camera_name"],
+  		calibratedAt: extra["calibratedAt"],
+  		producer: extra["producer"],
+  		cameraModel: "pinhole",
+  		image: {
+  			width,
+  			height,
+  			undistorted
+  		},
+  		intrinsics: {
+  			fx: k[0],
+  			fy: k[4],
+  			cx: k[2],
+  			cy: k[5],
+  			skew: k[1]
+  		},
+  		distortion,
+  		..."capture" in extra ? { capture: extra["capture"] } : {},
+  		..."quality" in extra ? { quality: extra["quality"] } : {},
+  		..."device" in extra ? { device: extra["device"] } : {}
+  	};
+  }
+  /**
+  * Maps a ROS distortion model onto the profile's.
+  *
+  * `plumb_bob` coefficients that are all zero read as no distortion. ROS has no model for "none"; a
+  * lens-free image is written as plumb_bob with five zeros, and reading it back must not invent a
+  * Brown-Conrady lens that happens to do nothing.
+  */
+  function readDistortion(root) {
+  	const rawModel = root["distortion_model"] ?? PLUMB_BOB;
+  	const coefficients = readMatrix(root, "distortion_coefficients", 1, void 0);
+  	switch (rawModel) {
+  		case PLUMB_BOB:
+  			if (coefficients.length !== 4 && coefficients.length !== 5) refuse("invalid-distortion", "distortion_coefficients", `plumb_bob takes 5 coefficients, not ${coefficients.length}.`);
+  			return isAllZero(coefficients) ? {
+  				model: "none",
+  				coefficients: []
+  			} : {
+  				model: "brown-conrady",
+  				coefficients
+  			};
+  		case RATIONAL_POLYNOMIAL:
+  			if (coefficients.length !== 8) refuse("invalid-distortion", "distortion_coefficients", `rational_polynomial takes 8 coefficients, not ${coefficients.length}.`);
+  			return {
+  				model: "brown-conrady",
+  				coefficients
+  			};
+  		case EQUIDISTANT:
+  			if (coefficients.length !== 4) refuse("invalid-distortion", "distortion_coefficients", `equidistant takes 4 coefficients, not ${coefficients.length}.`);
+  			return {
+  				model: "kannala-brandt",
+  				coefficients
+  			};
+  		default: refuse("invalid-distortion", "distortion_model", `Expected ${PLUMB_BOB}, ${RATIONAL_POLYNOMIAL} or ${EQUIDISTANT}.`);
+  	}
+  }
+  /**
+  * Binning and a region of interest change which pixels the calibration describes. ROS writes both
+  * with their do-nothing values, and only those are accepted: a calibration of a binned or cropped
+  * image is a different calibration, and reading it as the full frame's would move the principal
+  * point without anyone noticing.
+  */
+  function readBinningAndRoi(root) {
+  	for (const name of ["binning_x", "binning_y"]) {
+  		const value = root[name];
+  		if (value !== void 0 && value !== 0 && value !== 1) refuse("inconsistent-profile", name, "A binned image is not the image the calibration describes.");
+  	}
+  	const roi = root["roi"];
+  	if (roi === void 0) return;
+  	const region = record(roi, "roi");
+  	const width = region["width"] ?? 0;
+  	const height = region["height"] ?? 0;
+  	const offsetX = region["x_offset"] ?? 0;
+  	const offsetY = region["y_offset"] ?? 0;
+  	const whole = width === 0 && height === 0;
+  	const full = width === root["image_width"] && height === root["image_height"];
+  	if (offsetX !== 0 || offsetY !== 0 || !(whole || full)) refuse("inconsistent-profile", "roi", "A region of interest is not the image the calibration describes.");
+  }
+  function readMatrix(root, name, rows, cols) {
+  	const value = root[name];
+  	if (value === void 0) refuse("missing-field", name, "Required member is missing.");
+  	const matrix = record(value, name);
+  	const declaredRows = matrix["rows"];
+  	const declaredCols = matrix["cols"];
+  	const data = matrix["data"];
+  	if (declaredRows !== rows) refuse("invalid-value", `${name}.rows`, `Expected ${rows}.`);
+  	if (cols !== void 0 && declaredCols !== cols) refuse("invalid-value", `${name}.cols`, `Expected ${cols}.`);
+  	if (typeof declaredCols !== "number" || !Number.isInteger(declaredCols) || declaredCols < 0) refuse("invalid-value", `${name}.cols`, "Expected a column count.");
+  	if (!Array.isArray(data)) refuse("invalid-type", `${name}.data`, "Expected a sequence of numbers.");
+  	if (data.length !== rows * declaredCols) refuse("invalid-value", `${name}.data`, `Expected ${rows * declaredCols} numbers for a ${rows}x${declaredCols} matrix, not ${data.length}.`);
+  	return data.map((entry, index) => {
+  		if (typeof entry !== "number" || !Number.isFinite(entry)) refuse("invalid-type", `${name}.data[${index}]`, "Expected a number.");
+  		return entry;
+  	});
+  }
+  function expectEntries(data, name, entries, message) {
+  	for (const [index, expected] of entries) if (Math.abs(data[index] - expected) > MATRIX_TOLERANCE) refuse("inconsistent-profile", `${name}.data[${index}]`, message ?? `Expected ${expected}; the value read as ${data[index]}.`);
+  }
+  function record(value, path) {
+  	if (typeof value !== "object" || value === null || Array.isArray(value)) refuse("not-an-object", path, "Expected a mapping.");
+  	return value;
+  }
+  function isAllZero(values) {
+  	return values.every((value) => value === 0);
+  }
+  //#endregion
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile-text.js
+  /**
+  * Profile text as an operator hands it over: a ROS `camera_info` YAML file, or profile JSON.
+  *
+  * The operator does not know which one a file is and should not have to. JSON always starts with a
+  * brace; a calibration YAML file never does, because its top level is a block mapping. That one
+  * character decides, and each branch names what it expected when the text is not what it looked
+  * like.
+  */
+  function readProfileText(text) {
+  	const trimmed = text.trim();
+  	if (trimmed.length === 0) return {
+  		ok: false,
+  		error: {
+  			code: "not-an-object",
+  			path: "",
+  			message: "The profile is empty."
+  		}
+  	};
+  	if (trimmed.startsWith("{")) try {
+  		return {
+  			ok: true,
+  			document: JSON.parse(trimmed)
+  		};
+  	} catch {
+  		return {
+  			ok: false,
+  			error: {
+  				code: "not-an-object",
+  				path: "",
+  				message: "The profile is not valid JSON."
+  			}
+  		};
+  	}
+  	return readCameraInfoYaml(trimmed);
+  }
+  //#endregion
   //#region src/calibration/profile.ts
   /**
   * The intrinsic calibration profile.
@@ -659,17 +1725,78 @@
   * caller may replace state only once this resolves.
   */
   function parseCalibrationProfile(json) {
+  	const trimmed = json.trim();
+  	if (!trimmed.startsWith("{")) return readCameraSourceProfileText(trimmed);
   	let value;
   	try {
-  		value = JSON.parse(json);
+  		value = JSON.parse(trimmed);
   	} catch (error) {
   		throw new CalibrationProfileError("invalid-calibration", String(error));
   	}
+  	if (isRecord(value) && value.schema === "twcs/camera-intrinsics") return readCameraSourceProfileText(trimmed);
   	const credentialPath = findPairingCredential(value);
   	if (credentialPath) throw new CalibrationProfileError("credential-forbidden", `Pairing credential is forbidden at ${credentialPath}.`);
   	const record = requireRecord(value, "/");
   	if (record.schema === "twrmc/camera-calibration") return parseLegacyProfile(record);
   	return parseIntrinsicsProfile(record);
+  }
+  /**
+  * Reads a calibration in the form it leaves a PC in, through Camera Source's
+  * own reader, and holds it in this extension's shape.
+  *
+  * The rules come from `@kubohiroya/turbowarp-camera-source/profile` rather
+  * than a copy: a file Camera Source accepts is accepted here for the same
+  * reasons, and refused for the same reasons. The result is then checked again
+  * as this extension's profile, so a calibration Camera Source can describe and
+  * this extension cannot -- a fisheye lens -- is refused rather than relabelled.
+  */
+  function readCameraSourceProfileText(text) {
+  	const read = readProfileText(text);
+  	const result = read.ok ? readCameraProfileDocument(read.document) : read;
+  	if (!result.ok) {
+  		const { code, path, message } = result.error;
+  		throw new CalibrationProfileError(code === "forbidden-field" ? "credential-forbidden" : "invalid-calibration", path ? `${path}: ${message}` : message);
+  	}
+  	return assertCameraIntrinsics(fromCameraSourceProfile(result.profile));
+  }
+  /** The inverse of the conversion made on publishing to Camera Source. */
+  function fromCameraSourceProfile(profile) {
+  	const { fx, fy, cx, cy, skew } = profile.intrinsics;
+  	const { model, coefficients } = profile.distortion;
+  	let distortionModel;
+  	if (model === "none") distortionModel = "none";
+  	else if (model === "brown-conrady") distortionModel = coefficients.length === 8 ? "opencv-rational" : "opencv-plumb-bob";
+  	else throw new CalibrationProfileError("invalid-calibration", `This extension has no distortion model matching ${model}, so the profile cannot be imported.`);
+  	return {
+  		schema: CAMERA_INTRINSICS_SCHEMA_ID,
+  		version: 1,
+  		calibrationId: profile.profileId,
+  		cameraId: profile.cameraId,
+  		cameraModel: profile.cameraModel,
+  		imageWidth: profile.image.width,
+  		imageHeight: profile.image.height,
+  		imageState: profile.image.undistorted ? "undistorted" : "raw",
+  		intrinsicMatrix: [
+  			fx,
+  			skew,
+  			cx,
+  			0,
+  			fy,
+  			cy,
+  			0,
+  			0,
+  			1
+  		],
+  		distortionModel,
+  		distortionCoefficients: [...coefficients],
+  		...profile.quality ? { quality: { ...profile.quality } } : {},
+  		...profile.capture ? { capture: { ...profile.capture } } : {},
+  		...profile.device ? { device: { ...profile.device } } : {},
+  		calibratedAt: profile.calibratedAt
+  	};
+  }
+  function isRecord(value) {
+  	return typeof value === "object" && value !== null && !Array.isArray(value);
   }
   /** Validates a value this extension just produced, before it becomes state. */
   function assertCameraIntrinsics(value) {

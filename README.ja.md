@@ -138,7 +138,7 @@ Node.jsやbuild環境を用意する必要はありません。専用buildのOpe
 検証済みのversionをexact pinします。
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.13.1
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.14.0
 ```
 
 standalone bundle:
@@ -150,7 +150,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 version固定CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.13.1/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.14.0/dist/camera-calibration.js
 ```
 
 ## クイックスタート
@@ -226,6 +226,16 @@ schemaの`$id`だけです。
 `twrmc/camera-calibration` v1のプロファイルはimportで受け付けます。
 `worldFromCameraMatrix`は解釈し直さずに捨てます。world poseは内部校正プロファイル
 の一部ではないためです。
+
+**PCの外へ出す校正は、このJSONではなくROSの`camera_info` YAMLファイルです。**
+上のJSONはこの機能拡張がプロファイルを保持する形です。別のPCやツールへ渡すには、
+publishしてからCamera Sourceの`camera profile YAML for [CAMERA_ID]`を読みます。
+標準の部分はROSやOpenCV系のツールが読む形で、適合判定に使う項目は
+`turbowarp_camera_source`の下に入ります。`import calibration profile`はこのファイルと
+Camera Sourceの`twcs/camera-intrinsics`のJSONを、Camera Source自身の読み込み処理
+（`@kubohiroya/turbowarp-camera-source/profile`）で読みます。そのため、受け付ける理由も
+拒否する理由もCamera Sourceと同じです。魚眼（`equidistant`）の校正はこの機能拡張に
+対応するモデルが無いので、別のモデルとして読み替えずに拒否します。
 
 ## 板の姿勢
 

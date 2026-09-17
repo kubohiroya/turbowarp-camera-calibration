@@ -142,7 +142,7 @@ and is about 3.9 MB (about 1.5 MB gzip).
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.13.1
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.14.0
 ```
 
 Load the standalone bundle from:
@@ -154,7 +154,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.13.1/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.14.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -228,6 +228,18 @@ Profiles written by `@kubohiroya/turbowarp-realtime-motion-capture`
 (`twrmc/camera-calibration` v1) are accepted on import. Their
 `worldFromCameraMatrix` is dropped rather than reinterpreted, because a world
 pose is not part of an intrinsic profile.
+
+**A calibration leaves the PC as a ROS `camera_info` YAML file, not as this JSON.**
+The JSON above is how this extension holds a profile. To hand one to another
+machine or tool, publish it and read Camera Source's
+`camera profile YAML for [CAMERA_ID]`: the standard part is what ROS and
+OpenCV-based tools load, and the members compatibility is decided on travel
+under `turbowarp_camera_source`. `import calibration profile` reads that file --
+and Camera Source's `twcs/camera-intrinsics` JSON -- through Camera Source's own
+reader (`@kubohiroya/turbowarp-camera-source/profile`), so a file is accepted or
+refused here for the same reasons it is there. A fisheye (`equidistant`)
+calibration has no model in this extension and is refused rather than
+relabelled.
 
 ## Board pose
 
@@ -446,7 +458,7 @@ Measures where the board is, in the camera's own frame, using the calibration al
 
 ### `import calibration profile [JSON] for camera [CAMERA_ID]`
 
-Imports a calibration profile after schema, credential, and applicability checks. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.
+Imports a calibration profile after schema, credential, and applicability checks. Accepts a calibration file as Camera Source writes it -- ROS camera_info YAML, or twcs/camera-intrinsics JSON -- read through Camera Source's own reader, as well as this extension's profile JSON. Pre-migration profiles are accepted and their world pose is dropped rather than reinterpreted.
 
 | Property | Value |
 |---|---|
@@ -577,7 +589,7 @@ Returns the detailed calibration diagnostic for that camera.
 
 ### `camera [CAMERA_ID] calibration profile JSON`
 
-Exports the stored intrinsic profile for that camera, or an empty string when none exists.
+Returns the stored intrinsic profile in this extension's own JSON shape, or an empty string when none exists. To write a calibration to a file or a QR code, publish it and use Camera Source's camera profile YAML, which other tools read.
 
 | Property | Value |
 |---|---|
