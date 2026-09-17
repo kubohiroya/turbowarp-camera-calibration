@@ -293,6 +293,19 @@ describe('CameraCalibrationController', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it('does not refuse a solve on a single held-out view', async () => {
+    // One view, possibly six corners of one: too noisy to refuse a
+    // calibration on. It is still reported.
+    const {controller, validate} = setup();
+    validate.mockResolvedValue(4);
+    await controller.start(startOptions);
+    for (let index = 0; index < 9; index += 1) await controller.addSample('camera-1');
+    await controller.solve('camera-1');
+    expect(controller.state('camera-1')).toBe('solved');
+    expect(controller.holdoutSampleCount('camera-1')).toBe(1);
+    expect(controller.latestHoldoutError('camera-1')).toBe(4);
+  });
+
   it('counts the views the fit used, not the ones held back, in the profile quality', async () => {
     const {controller} = setup();
     await controller.start(startOptions);

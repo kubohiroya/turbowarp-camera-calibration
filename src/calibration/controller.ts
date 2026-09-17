@@ -118,6 +118,26 @@ const MINIMUM_NORMALIZED_NOVELTY = 0.015;
  */
 const HOLDOUT_FRACTION = 0.2;
 
+/**
+ * Held-out views needed before their error decides anything.
+ *
+ * One view is one pose's worth of corners, and a partial one may be six of
+ * them: its error is too noisy to refuse a calibration on. Below this the
+ * hold-out error is still reported, and nothing is decided by it.
+ */
+const MINIMUM_HOLDOUT_VIEWS = 2;
+
+/**
+ * Looks in a row that may fail before the automatic shutter stops.
+ *
+ * A failure the session survives -- the solver could not read one frame, its
+ * worker was restarted -- is not a reason to stop watching; stopping on the
+ * first would leave the operator holding a board in front of a shutter that
+ * has quietly given up. One that keeps happening is not transient, and a
+ * shutter retrying it four times a second would only repeat the error.
+ */
+const AUTOMATIC_FAILURE_LIMIT = 3;
+
 /** Codes a profile validation can produce, and therefore can clear. */
 const PROFILE_ERROR_CODES: ReadonlySet<string> = new Set([
   'invalid-calibration',
@@ -207,6 +227,8 @@ class CameraCalibration {
   private collected = 0;
   /** The value of `collected` the last automatic solve was started from. */
   private solvedFrom = 0;
+  /** Automatic looks that failed since the last one that did not. */
+  private automaticFailures = 0;
 
   public constructor(
     public readonly cameraId: string,
@@ -325,6 +347,7 @@ class CameraCalibration {
     if (this.automatic) return;
     if (!this.session || !this.lease) return;
     this.automatic = true;
+    this.automaticFailures = 0;
     this.guide('keep-going');
     this.scheduleTick(this.operation);
   }
@@ -459,11 +482,20 @@ class CameraCalibration {
     if (!this.sampling && !this.solving && this.lease && this.calibrationState === 'ready') {
       try {
         await this.track(this.captureSample(operation, true));
+        this.automaticFailures = 0;
       } catch {
-        // Only the failures that end a session reach here; they are already
-        // recorded, and there is nothing left to watch.
-        this.stopAutomatic();
-        return;
+        // Already recorded. A session that ended leaves nothing to watch; one
+        // that survived is watched again, unless it keeps failing. Either way
+        // a shutter that stops says so, rather than leaving its last guidance
+        // telling the operator to keep going.
+        this.automaticFailures += 1;
+        const survived =
+          operation === this.operation && this.lease !== undefined && this.calibrationState === 'ready';
+        if (!survived || this.automaticFailures >= AUTOMATIC_FAILURE_LIMIT) {
+          this.stopAutomatic();
+          this.guide('');
+          return;
+        }
       }
       if (this.automatic && !this.solving && this.guidanceCode === 'solving') {
         void this.startAutomaticSolve(operation);
@@ -536,7 +568,7 @@ class CameraCalibration {
     // hold-out error says it predicts views it never saw. Ending a session on
     // the first alone would end it exactly when the set was too small.
     const good =
-      this.holdoutCount > 0 &&
+      this.holdoutCount >= MINIMUM_HOLDOUT_VIEWS &&
       Number.isFinite(this.reprojectionError) &&
       Number.isFinite(this.holdoutError) &&
       this.reprojectionError <= session.maximumReprojectionErrorPx &&
@@ -549,13 +581,13 @@ class CameraCalibration {
       // cannot fix it, and telling the operator to carry on is telling them to
       // do the thing that is not working.
       const overfitted =
-        this.holdoutCount > 0 &&
+        this.holdoutCount >= MINIMUM_HOLDOUT_VIEWS &&
         Number.isFinite(this.reprojectionError) &&
         this.reprojectionError <= session.maximumReprojectionErrorPx;
       this.guide(overfitted ? 'vary-more' : 'keep-going');
       return;
     }
-    await this.finishSolve(session, lease, solution, fitted.length);
+    await this.finishSolve(session, lease, solution, fitted.length, true);
   }
 
   public solve(): Promise<void> {
@@ -565,9 +597,13 @@ class CameraCalibration {
       // handing that back would report a refusal as a success. Wait for it,
       // and solve as asked unless it already finished the session.
       if (!this.solvingAutomatically) return this.solving;
-      return this.solving.then(() =>
-        this.calibrationState === 'solved' ? undefined : this.solve()
-      );
+      return this.solving.then(() => {
+        if (this.calibrationState === 'solved') return undefined;
+        // It ended the session -- the camera settings changed under it. That
+        // is the answer to this solve too, not "not ready".
+        if (this.calibrationState === 'error') throw new Error(this.calibrationErrorMessage);
+        return this.solve();
+      });
     }
     if (!this.session || !this.lease || this.calibrationState !== 'ready') {
       throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
@@ -673,6 +709,23 @@ class CameraCalibration {
           'calibration-not-applicable',
           `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${frame.width}x${frame.height}.`
         );
+      }
+      // Zoom and focus move the focal length and the distortion without
+      // changing the frame size, and a pose read through optics that no longer
+      // hold is wrong in distance with nothing to show for it. Judged the way
+      // a solve is judged before it lands; a profile that never recorded its
+      // settings has nothing to compare, as before.
+      if (profile.capture) {
+        const drift = conditionsDrift(
+          {capture: profile.capture, device: profile.device ?? {}},
+          captureConditionsOf(this.runtime, this.cameraId)
+        );
+        if (drift !== undefined) {
+          this.refuse(
+            'calibration-not-applicable',
+            `The camera settings differ from the ones the profile was calibrated under (${drift}).`
+          );
+        }
       }
       const backend = await this.resolveBackend();
       const pose = await backend.measurePose(
@@ -1124,7 +1177,7 @@ class CameraCalibration {
     // overfitted answer -- exactly when the set was too small or too alike --
     // and a solve asked for by hand is not a reason to accept one.
     if (
-      heldOut.length > 0 &&
+      heldOut.length >= MINIMUM_HOLDOUT_VIEWS &&
       (!Number.isFinite(this.holdoutError) ||
         this.holdoutError > session.maximumReprojectionErrorPx)
     ) {
@@ -1133,7 +1186,7 @@ class CameraCalibration {
         `Hold-out reprojection RMS ${this.holdoutError} px over ${heldOut.length} views the fit did not see exceeds ${session.maximumReprojectionErrorPx} px, while the fit itself reached ${this.reprojectionError} px. The views are too alike: vary the distance and the angle.`
       );
     }
-    await this.finishSolve(session, lease, solution, fitted.length);
+    await this.finishSolve(session, lease, solution, fitted.length, false);
   }
 
   /**
@@ -1149,7 +1202,8 @@ class CameraCalibration {
     session: CalibrationSession,
     lease: CameraLease,
     solution: CalibrationSolveResult,
-    fittedCount: number
+    fittedCount: number,
+    automatic: boolean
   ): Promise<void> {
     // Solved means usable on this camera. A profile that Camera Source would
     // judge not to fit the camera it was just solved on is not a result to
@@ -1200,6 +1254,9 @@ class CameraCalibration {
     } catch (error) {
       // An answer outside the contract -- a principal point off the image --
       // is a set that has not constrained the camera yet, not a lost session.
+      // Nobody asked the shutter's solve for an answer, so it records nothing:
+      // it keeps watching, as it does for any answer not good enough yet.
+      if (automatic) throw error;
       this.rejectWith('invalid-calibration', error);
     }
     this.stopAutomatic();

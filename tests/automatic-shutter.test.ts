@@ -147,7 +147,7 @@ function setup(options: Options = {}) {
     nowMilliseconds: () => Date.parse('2026-09-16T12:00:00Z'),
     schedule: clock.schedule
   });
-  return {controller, clock, release, solve, validate, captureSample};
+  return {controller, clock, release, solve, validate, captureSample, lease};
 }
 
 async function started(options: Options = {}) {
@@ -382,6 +382,83 @@ describe('the automatic shutter', () => {
     expect(controller.sampleCount(CAMERA)).toBe(0);
     expect(controller.guidance(CAMERA)).toBe('show-the-board');
     expect(controller.errorCode(CAMERA)).toBe('');
+  });
+
+  it('keeps watching after a failure the session survives', async () => {
+    // The solver could not read one frame. Stopping there left the operator
+    // told to keep going by a shutter that had given up.
+    const {controller, clock, captureSample} = await started();
+    await clock.run(3);
+    captureSample.mockRejectedValueOnce(new Error('transient'));
+    await clock.run(1);
+    expect(controller.automatic(CAMERA)).toBe(true);
+    expect(controller.errorCode(CAMERA)).toBe('sample-failed');
+    expect(clock.waiting()).toBe(1);
+    await clock.run(1);
+    expect(controller.sampleCount(CAMERA)).toBe(4);
+    expect(controller.errorCode(CAMERA)).toBe('');
+  });
+
+  it('stops, and says nothing further, when failures keep coming', async () => {
+    const {controller, clock, captureSample} = await started();
+    await clock.run(2);
+    captureSample.mockRejectedValue(new Error('the worker is gone'));
+    await clock.run(3);
+    expect(controller.automatic(CAMERA)).toBe(false);
+    expect(controller.guidance(CAMERA)).toBe('');
+    expect(controller.errorCode(CAMERA)).toBe('sample-failed');
+    expect(controller.state(CAMERA)).toBe('ready');
+    expect(clock.waiting()).toBe(0);
+  });
+
+  it('clears its guidance when the session it was watching ends', async () => {
+    const {controller, clock, lease} = await started();
+    await clock.run(2);
+    lease.getFrameSource = vi.fn(() => {
+      throw new Error('ended');
+    });
+    await clock.run(1);
+    expect(controller.state(CAMERA)).toBe('error');
+    expect(controller.automatic(CAMERA)).toBe(false);
+    expect(controller.guidance(CAMERA)).toBe('');
+  });
+
+  it('records nothing when its own solve answers outside the contract', async () => {
+    // Nobody asked the background solve for an answer; one that is not usable
+    // yet is like one that is not good enough yet.
+    const {controller, clock, solve} = await started();
+    solve.mockResolvedValue({
+      intrinsicMatrix: [700, 0, 5000, 0, 700, 300, 0, 0, 1],
+      distortionModel: 'opencv-plumb-bob',
+      distortionCoefficients: [0.01, -0.02, 0, 0, 0],
+      reprojectionErrorPx: 0.75
+    });
+    await clock.run(16);
+    expect(solve).toHaveBeenCalled();
+    expect(controller.errorCode(CAMERA)).toBe('');
+    expect(controller.state(CAMERA)).toBe('ready');
+    expect(controller.guidance(CAMERA)).toBe('keep-going');
+  });
+
+  it('answers a solve that waited with the error the background solve ended in', async () => {
+    let focusMode = 'continuous';
+    const {controller, clock, solve} = await started({
+      conditions: () => ({width: 800, height: 600, deviceId: 'device-1', label: 'Camera', focusMode})
+    });
+    let open: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const answer = solve.getMockImplementation();
+    solve.mockImplementation(async (...args) => {
+      await gate;
+      return answer!(...args);
+    });
+    for (let look = 0; look < 20 && solve.mock.calls.length === 0; look += 1) await clock.run(1);
+    const asked = controller.solve(CAMERA);
+    focusMode = 'manual';
+    open?.();
+    await expect(asked).rejects.toThrow(/capture-condition-mismatch/u);
   });
 
   it('holds the answer against views it was not fitted to', async () => {

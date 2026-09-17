@@ -342,14 +342,15 @@ block referenceは
 | 採用サンプルが40枚 | 手動では`sample-limit`。自動では最も他と似ている1枚を入れ替えます |
 | 検出したコーナーが板上の一直線に並んでいる | 手動では`sample-low-quality`で却下し、自動ではguidanceで`show-the-board`を示します。そのようなビューからの姿勢計測は`board-pose-unavailable`です |
 | ソルバーがframeまたはサンプル組を処理できなかった | `sample-failed`または`solve-failed`。セッションはサンプルとカメラを保ったままreadyに戻り、やり直せます |
+| 自動撮影の1回の撮影が失敗し、セッションは続いている | エラーを記録して撮影を続けます。3回続けて失敗すると停止し、guidanceを空にします |
 | ソルバーのworkerが応答しなくなった | 120秒で、またはworkerがエラーを報告した時点で呼び出しを失敗させ、次の呼び出しで新しいworkerを起動します |
 | 自動撮影がsolve中に、手動でサンプル追加・solveした | サンプル追加はそのsolveが終わるまで却下します。solveはその完了を待ち、セッションが終わっていなければ改めて解いて自身の結果を返します |
 | 傾けていない組でsolve | `sample-poses-degenerate`。セッションは開いたままでサンプルを追加できます |
 | セッション中に解像度・device・左右反転が変わった | `resolution-mismatch` または `capture-condition-mismatch` |
 | 解くまでの間にリサイズ・ズーム・フォーカス・カメラが変わった | `capture-condition-mismatch`。camera-source がこのカメラに合わないと判定するプロファイルになるため、`solved` ではなく `error` で終わる |
-| 再投影誤差が上限を超えた | `reprojection-too-high`。プロファイルは保存せず、サンプルを追加できます。手動のsolveも自動撮影と同じく、fit側に加えてhold-out誤差を確かめます |
+| 再投影誤差が上限を超えた | `reprojection-too-high`。プロファイルは保存せず、サンプルを追加できます。手動のsolveも自動撮影と同じく、検証用に2視点以上残したときはfit側に加えてhold-out誤差を確かめます |
 | 別のカメラ、または別の撮影サイズのプロファイル | 状態を変更する前に`calibration-not-applicable`で拒否します |
-| プロファイルと異なるサイズのframeで板の姿勢を測る | `calibration-not-applicable`。計測せずにカメラを解放します |
+| プロファイルと異なるサイズのframe、またはプロファイルに記録された設定からリサイズ・ズーム・フォーカス・カメラが変わった状態で板の姿勢を測る | `calibration-not-applicable`。計測せずにカメラを解放します |
 | 校正の無いカメラ、または板が写っていない状態で姿勢を測る | `not-calibrated` または `board-pose-unavailable` |
 | solve成功 | ただちにカメラのleaseを解放します |
 | project停止・project再読込・runtime破棄 | すべてのセッションを取り消し、すべてのleaseを解放します |

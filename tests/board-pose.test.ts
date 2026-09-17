@@ -10,7 +10,10 @@ const BOARD = {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0
 
 // Absence is null, not undefined: passing undefined to a defaulted parameter
 // takes the default, so `setup(undefined)` would quietly mean "found it".
-function setup(pose: BoardPoseSolution | null = samplePose()) {
+function setup(
+  pose: BoardPoseSolution | null = samplePose(),
+  conditions?: () => Record<string, unknown>
+) {
   const release = vi.fn(async () => undefined);
   const frame = {
     kind: 'video',
@@ -37,7 +40,8 @@ function setup(pose: BoardPoseSolution | null = samplePose()) {
     kubohiroyaCameraSourceCapability: {
       version: 1,
       requireVersion: () => undefined,
-      registerProfile: () => ({ok: true as const})
+      registerProfile: () => ({ok: true as const}),
+      ...(conditions ? {conditionsFor: conditions} : {})
     }
   };
   const controller = new CameraCalibrationController({
@@ -103,6 +107,39 @@ describe('measuring where the board is', () => {
     expect(measurePose).not.toHaveBeenCalled();
     expect(controller.boardPoseJson('camera-1')).toBe('');
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses when zoom or focus differ from what the profile was calibrated under', async () => {
+    // They move the focal length without changing the frame size, so the
+    // size check cannot see it, and the pose comes out wrong in distance.
+    let zoom = 1;
+    const {controller, measurePose, release} = setup(samplePose(), () => ({
+      zoom,
+      focusMode: 'manual',
+      label: 'USB Camera'
+    }));
+    const calibrated = {
+      ...(JSON.parse(PROFILE) as Record<string, unknown>),
+      capture: {zoom: 1, focusMode: 'manual'},
+      device: {label: 'USB Camera'}
+    };
+    await controller.importProfile('camera-1', JSON.stringify(calibrated));
+    await controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'});
+    expect(measurePose).toHaveBeenCalledOnce();
+
+    zoom = 2;
+    await expect(
+      controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
+    ).rejects.toThrow(/calibration-not-applicable: .*zoom 1 -> 2/u);
+    expect(measurePose).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it('still measures with a profile that never recorded its settings', async () => {
+    const {controller, measurePose} = setup(samplePose(), () => ({zoom: 2}));
+    await controller.importProfile('camera-1', PROFILE);
+    await controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'});
+    expect(measurePose).toHaveBeenCalledOnce();
   });
 
   it('refuses a board the marker dictionary cannot fill before taking the camera', async () => {

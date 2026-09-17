@@ -132,27 +132,70 @@ export function measuredTilt(sample: CalibrationSample, board: CalibrationBoard)
   });
   if (at.size < 4) return {x: undefined, y: undefined};
 
-  // Steps along a row, grouped by which half of the board they sit in.
-  const acrossNear: number[] = [];
-  const acrossFar: number[] = [];
-  const downNear: number[] = [];
-  const downFar: number[] = [];
+  // Steps along a row, grouped by which half of the board the row is in; steps
+  // down a column, by which half the column is in.
+  const across = new HalfSteps(rows);
+  const down = new HalfSteps(columns);
   for (const [id, corner] of at) {
     const column = id % columns;
     const row = Math.floor(id / columns);
     const right = column + 1 < columns ? at.get(id + 1) : undefined;
-    if (right) {
-      (row * 2 < rows - 1 ? acrossNear : acrossFar).push(distance(corner, right));
-    }
+    if (right) across.add(row, distance(corner, right));
     const below = row + 1 < rows ? at.get(id + columns) : undefined;
-    if (below) {
-      (column * 2 < columns - 1 ? downNear : downFar).push(distance(corner, below));
+    if (below) down.add(column, distance(corner, below));
+  }
+  return {x: across.tilt(), y: down.tilt()};
+}
+
+/**
+ * Grid steps split between the two halves of a board along one axis.
+ *
+ * The line in the middle of an odd count belongs to neither half. Put in one
+ * of them, it drags that half's mean towards the other's and shrinks the
+ * reading on a board that has one.
+ *
+ * The reading is scaled to the whole board. Under perspective the log ratio of
+ * two step lengths grows with how far apart on the board they were taken, so
+ * a view that shows only the two lines either side of the middle reads a small
+ * fraction of what the whole board would, turned the same way. Left like that,
+ * such views count as nearly square on and pull the spread down -- the fault
+ * that leaving an unreadable axis undefined was meant to remove. Divided by
+ * the separation the view actually had and multiplied by the whole board's,
+ * every view reads on the same scale.
+ */
+class HalfSteps {
+  private readonly near: number[] = [];
+  private readonly far: number[] = [];
+  private nearLines = 0;
+  private farLines = 0;
+
+  public constructor(private readonly count: number) {}
+
+  public add(line: number, step: number): void {
+    const twice = line * 2;
+    if (twice < this.count - 1) {
+      this.near.push(step);
+      this.nearLines += line;
+    } else if (twice > this.count - 1) {
+      this.far.push(step);
+      this.farLines += line;
     }
   }
-  return {
-    x: logRatio(mean(acrossNear), mean(acrossFar)),
-    y: logRatio(mean(downNear), mean(downFar))
-  };
+
+  public tilt(): number | undefined {
+    const ratio = logRatio(mean(this.near), mean(this.far));
+    if (ratio === undefined) return undefined;
+    const separation = this.farLines / this.far.length - this.nearLines / this.near.length;
+    const whole = wholeSeparation(this.count);
+    return separation > 0 ? (ratio * whole) / separation : ratio;
+  }
+}
+
+/** How far apart the two halves of `count` lines are, as the mean line of each. */
+function wholeSeparation(count: number): number {
+  // Near is lines 0 to half-1 and far the same number from the other end, so
+  // every far line sits count-half lines past its near counterpart.
+  return count - Math.floor(count / 2);
 }
 
 /**
