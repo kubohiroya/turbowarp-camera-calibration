@@ -17,11 +17,12 @@ import type {
   CalibrationErrorCode,
   CalibrationGuidance,
   CalibrationStartOptions,
-  CalibrationState
+  CalibrationState,
+  TiltDirection
 } from './calibration/contract.js';
 
 export const runtimeCapabilityKey = 'kubohiroyaCameraCalibrationCapability';
-export const runtimeCapabilityVersion = 2 as const;
+export const runtimeCapabilityVersion = 3 as const;
 
 export interface CameraCalibrationCapabilityV1 {
   readonly version: typeof runtimeCapabilityVersion;
@@ -58,6 +59,28 @@ export interface CameraCalibrationCapabilityV1 {
    * recording those as errors would leave one showing for most of a session.
    */
   guidance(cameraId: string): CalibrationGuidance;
+  /**
+   * How much the view the shutter is looking at would add, 0 to 1. Since v3.
+   *
+   * Measured in tilt rather than in where the corners landed: sliding the
+   * board moves every corner and adds nothing a solve can use, so a signal
+   * driven by corner distance would be loudest for the one motion that does
+   * not work. One is a view turned as far from everything held as the whole
+   * set is required to spread. Zero when nothing usable is in frame.
+   *
+   * Meant for something continuous -- a tone, a bar, a click rate -- because
+   * the operator is holding the board and not reading the screen.
+   */
+  novelty(cameraId: string): number;
+  /**
+   * Which way the board still has to be turned. Since v3.
+   *
+   * `top-near`, `top-far`, `left-near`, `right-near`, or empty outside a live
+   * session. The direction least represented in what has been collected, so
+   * that "tilt it more" -- an instruction the operator has to interpret --
+   * becomes one they can carry out.
+   */
+  tiltDirection(cameraId: string): TiltDirection;
   /** Solves from the accepted samples and releases the camera. */
   solve(cameraId: string): Promise<void>;
   /** Hands the solved profile to Camera Source, which owns the profile contract. */
@@ -155,6 +178,8 @@ export function createRuntimeCapability(
     setAutomatic: (cameraId, enabled) => host.setAutomatic(cameraId, enabled),
     automatic: (cameraId) => host.automatic(cameraId),
     guidance: (cameraId) => host.guidance(cameraId),
+    novelty: (cameraId) => host.novelty(cameraId),
+    tiltDirection: (cameraId) => host.tiltDirection(cameraId),
     solve: (cameraId) => host.solve(cameraId),
     publish: (cameraId) => host.publish(cameraId),
     cancel: (cameraId) => host.cancel(cameraId),

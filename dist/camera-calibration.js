@@ -109,6 +109,26 @@
   			} }
   		},
   		{
+  			"opcode": "cameraCalibrationNovelty",
+  			"blockType": "REPORTER",
+  			"text": "camera calibration novelty [CAMERA_ID]",
+  			"description": "Returns how much the view automatic capture is looking at would add, from 0 to 1. One is a view turned as far from every retained view as the whole set is required to spread; zero means nothing usable is in frame. Measured in tilt, not in where the corners landed: sliding the board moves every corner and adds nothing a solve can use. Meant to drive something continuous -- a tone, a bar, a click rate -- because the operator is holding the board and not reading the screen.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
+  			"opcode": "cameraCalibrationTiltDirection",
+  			"blockType": "REPORTER",
+  			"text": "camera calibration tilt direction [CAMERA_ID]",
+  			"description": "Returns which way the board still has to be turned: top-near, top-far, left-near, right-near, or empty outside a live session. The direction least represented in what has been collected, so that \"tilt it more\" -- an instruction the operator has to interpret -- becomes one they can carry out.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
   			"opcode": "solveCameraCalibration",
   			"blockType": "COMMAND",
   			"text": "solve calibration for camera [CAMERA_ID]",
@@ -735,6 +755,44 @@
   	y: 0
   });
   /**
+  * Which way the board still has to be turned.
+  *
+  * `x` is the upper half's grid steps against the lower half's, so a positive
+  * `x` is a board whose top is nearer the camera. `y` is the left half against
+  * the right, so a positive `y` is a board whose left edge is nearer. The names
+  * are in the contract; the signs they correspond to are here.
+  */
+  /**
+  * The direction least represented in what has been collected.
+  *
+  * Each direction is scored by the furthest any held view reaches along it, and
+  * the weakest wins. Asking for the weakest rather than simply "more tilt"
+  * turns an instruction the operator has to interpret into one they can carry
+  * out, and it spreads the set on purpose rather than by luck.
+  *
+  * Nothing collected asks for the first direction rather than nothing at all:
+  * an operator holding a board square-on has to be told to start somewhere.
+  */
+  function weakestTiltDirection(samples, board) {
+  	const tilts = samples.map((sample) => tiltOf(sample, board));
+  	const reach = [
+  		["top-near", (tilt) => tilt.x],
+  		["top-far", (tilt) => -tilt.x],
+  		["left-near", (tilt) => tilt.y],
+  		["right-near", (tilt) => -tilt.y]
+  	];
+  	let weakest = "top-near";
+  	let smallest = Number.POSITIVE_INFINITY;
+  	for (const [direction, along] of reach) {
+  		const furthest = tilts.reduce((best, tilt) => Math.max(best, along(tilt)), 0);
+  		if (furthest < smallest) {
+  			smallest = furthest;
+  			weakest = direction;
+  		}
+  	}
+  	return weakest;
+  }
+  /**
   * The minimum spread of tilts a solve is allowed to proceed from.
   *
   * A board half as wide as its distance, tilted thirty degrees, gives an edge
@@ -743,6 +801,16 @@
   * way every time, without refusing a cautious operator who varied it a little.
   */
   var MINIMUM_POSE_SPREAD = .08;
+  /**
+  * How differently two views were turned.
+  *
+  * The distance the solve cares about. Two views taken from the same angle
+  * constrain the same thing however far apart on the board they were taken, so
+  * this ignores where the board was and reads only how it was turned.
+  */
+  function tiltDistance(left, right) {
+  	return Math.hypot(left.x - right.x, left.y - right.y);
+  }
   function tiltOf(sample, board) {
   	const { columns, rows } = board;
   	const at = /* @__PURE__ */ new Map();
@@ -893,6 +961,7 @@
   		this.operation = 0;
   		this.automatic = false;
   		this.guidanceCode = "";
+  		this.noveltyNow = 0;
   		this.solvedFrom = 0;
   	}
   	async start(options) {
@@ -996,6 +1065,14 @@
   	guidance() {
   		return this.guidanceCode;
   	}
+  	novelty() {
+  		return this.noveltyNow;
+  	}
+  	/** Which way to turn the board next. Empty outside a live session. */
+  	tiltDirection() {
+  		if (!this.session || !this.lease) return "";
+  		return weakestTiltDirection(this.samples, this.session.board);
+  	}
   	/**
   	* Waits for the camera to hand over a frame with a size on it.
   	*
@@ -1022,6 +1099,7 @@
   	}
   	stopAutomatic() {
   		this.automatic = false;
+  		this.noveltyNow = 0;
   		this.cancelTick?.();
   		this.cancelTick = void 0;
   	}
@@ -1339,6 +1417,7 @@
   		if (operation !== this.operation) return;
   		const sample = detection.sample;
   		if (!sample) {
+  			this.noveltyNow = 0;
   			const elsewhere = detection.markersSeen > 0;
   			if (automatic) return this.decline(elsewhere ? "wrong-board" : "show-the-board");
   			if (elsewhere) this.reject("wrong-board", `${detection.markersSeen} markers are in frame and they do not make the ${session.board.columns}x${session.board.rows} board. Show that board, or start again with the one you are holding.`);
@@ -1349,6 +1428,7 @@
   			this.reject("sample-low-quality", `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
   		}
   		const accepted = sample;
+  		this.noveltyNow = this.noveltyOf(accepted, session);
   		if (this.samples.some((previous) => normalizedCornerDistance(previous, accepted, session.imageWidth, session.imageHeight) < MINIMUM_NORMALIZED_NOVELTY)) {
   			if (automatic) return this.decline("move-or-tilt");
   			this.reject("sample-too-similar", "Move or tilt the board before capturing another sample.");
@@ -1392,6 +1472,27 @@
   			}
   		}
   		this.samples.splice(dullest, 1);
+  	}
+  	/**
+  	* How much the view being looked at would add, from 0 to 1.
+  	*
+  	* Measured in tilt, not in where the corners landed. The corner distance is
+  	* what decides whether a view is a duplicate, and it is deliberately not
+  	* this: sliding the board across the frame moves every corner a long way and
+  	* adds nothing a solve can use, so a signal driven by it would be loudest
+  	* for the one motion that does not work. Tilt is what separates focal length
+  	* from distance, so tilt is what this rewards.
+  	*
+  	* One is a view turned as far from everything held as the whole set is
+  	* required to spread, which is a view worth stopping for. An empty set reads
+  	* as one, because the first view is the most useful one there is.
+  	*/
+  	noveltyOf(sample, session) {
+  		if (this.samples.length === 0) return 1;
+  		const tilt = tiltOf(sample, session.board);
+  		let nearest = Number.POSITIVE_INFINITY;
+  		for (const held of this.samples) nearest = Math.min(nearest, tiltDistance(tilt, tiltOf(held, session.board)));
+  		return Math.max(0, Math.min(1, nearest / MINIMUM_POSE_SPREAD));
   	}
   	/** Records what the operator should do next, without disturbing the state. */
   	guide(guidance) {
@@ -1556,6 +1657,12 @@
   	}
   	guidance(cameraId) {
   		return this.existing(cameraId)?.guidance() ?? "";
+  	}
+  	novelty(cameraId) {
+  		return this.existing(cameraId)?.novelty() ?? 0;
+  	}
+  	tiltDirection(cameraId) {
+  		return this.existing(cameraId)?.tiltDirection() ?? "";
   	}
   	cancel(cameraId) {
   		return this.existing(cameraId)?.cancel() ?? Promise.resolve();
@@ -2100,9 +2207,9 @@
   var runtimeCapabilityKey = "kubohiroyaCameraCalibrationCapability";
   function createRuntimeCapability(host) {
   	const capability = {
-  		version: 2,
+  		version: 3,
   		requireVersion(version) {
-  			if (!Number.isInteger(version) || version < 1 || version > 2) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 2.`);
+  			if (!Number.isInteger(version) || version < 1 || version > 3) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 3.`);
   			return capability;
   		},
   		start: (options) => host.start(options),
@@ -2110,6 +2217,8 @@
   		setAutomatic: (cameraId, enabled) => host.setAutomatic(cameraId, enabled),
   		automatic: (cameraId) => host.automatic(cameraId),
   		guidance: (cameraId) => host.guidance(cameraId),
+  		novelty: (cameraId) => host.novelty(cameraId),
+  		tiltDirection: (cameraId) => host.tiltDirection(cameraId),
   		solve: (cameraId) => host.solve(cameraId),
   		publish: (cameraId) => host.publish(cameraId),
   		cancel: (cameraId) => host.cancel(cameraId),
@@ -2211,6 +2320,12 @@
   	cameraCalibrationGuidance(args) {
   		return this.controller.guidance(normalizeId(args.CAMERA_ID));
   	}
+  	cameraCalibrationNovelty(args) {
+  		return this.controller.novelty(normalizeId(args.CAMERA_ID));
+  	}
+  	cameraCalibrationTiltDirection(args) {
+  		return this.controller.tiltDirection(normalizeId(args.CAMERA_ID));
+  	}
   	async solveCameraCalibration(args) {
   		await this.controller.solve(normalizeId(args.CAMERA_ID));
   	}
@@ -2297,6 +2412,8 @@
   			setAutomatic: (cameraId, enabled) => this.controller.setAutomatic(normalizeId(cameraId), enabled),
   			automatic: (cameraId) => this.controller.automatic(normalizeId(cameraId)),
   			guidance: (cameraId) => this.controller.guidance(normalizeId(cameraId)),
+  			novelty: (cameraId) => this.controller.novelty(normalizeId(cameraId)),
+  			tiltDirection: (cameraId) => this.controller.tiltDirection(normalizeId(cameraId)),
   			solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
   			publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
   			cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),
