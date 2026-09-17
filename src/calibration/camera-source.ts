@@ -100,6 +100,43 @@ export function captureConditionsOf(
   return {capture, device};
 }
 
+/**
+ * What changed in the camera's optics since a session began, or undefined when nothing did.
+ *
+ * The members are the ones Camera Source decides a profile's fit on -- resize mode, zoom, focus
+ * mode and focus distance, compared with its tolerances, and the device label. A difference in
+ * any of them would make the profile being solved `incompatible` with this camera the moment it
+ * was registered; conditions that could be read at the start and cannot be read now would make it
+ * `undetermined`. Either way the views were not all taken under the conditions the profile is
+ * about to claim, so the session is not worth ending as solved.
+ *
+ * Frame rate, facing mode and the device id are left out for the reason Camera Source leaves them
+ * out: none of them changes how the lens projects.
+ */
+export function conditionsDrift(
+  recorded: {capture: CalibrationCapture; device: CalibrationDevice},
+  current: {capture: CalibrationCapture; device: CalibrationDevice} | undefined
+): string | undefined {
+  if (!current) return 'the camera no longer reports how it is configured';
+  const changed: string[] = [];
+  const text = (name: string, left?: string, right?: string) => {
+    if (left !== right) changed.push(`${name} ${left ?? 'not reported'} -> ${right ?? 'not reported'}`);
+  };
+  const number = (name: string, left?: number, right?: number) => {
+    const same =
+      left === undefined || right === undefined ? left === right : Math.abs(left - right) <= 1e-6;
+    if (!same) changed.push(`${name} ${left ?? 'not reported'} -> ${right ?? 'not reported'}`);
+  };
+  text('resize mode', recorded.capture.resizeMode, current.capture.resizeMode);
+  number('zoom', recorded.capture.zoom, current.capture.zoom);
+  text('focus mode', recorded.capture.focusMode, current.capture.focusMode);
+  number('focus distance', recorded.capture.focusDistance, current.capture.focusDistance);
+  if (recorded.device.label !== undefined && current.device.label !== undefined) {
+    text('device', recorded.device.label, current.device.label);
+  }
+  return changed.length === 0 ? undefined : changed.join(', ');
+}
+
 export function requireProfileRegistry(
   runtime: TurboWarpRuntime
 ): CameraSourceCapabilityV1 {

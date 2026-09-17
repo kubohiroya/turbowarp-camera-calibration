@@ -89,6 +89,8 @@ interface Options {
   readonly markersSeen?: number;
   readonly holdoutError?: number;
   readonly reprojectionErrorPx?: number;
+  /** What Camera Source reports about the camera's configuration, per call. */
+  readonly conditions?: () => Record<string, unknown>;
 }
 
 function setup(options: Options = {}) {
@@ -131,7 +133,8 @@ function setup(options: Options = {}) {
   const capability = {
     version: 1,
     requireVersion: vi.fn(() => capability),
-    registerProfile: vi.fn((document: unknown) => ({ok: true as const, profile: document}))
+    registerProfile: vi.fn((document: unknown) => ({ok: true as const, profile: document})),
+    ...(options.conditions ? {conditionsFor: vi.fn(options.conditions)} : {})
   };
   const runtime: TurboWarpRuntime = {
     ext_kubohiroyacamerasource: {acquireCamera: vi.fn(async () => lease)},
@@ -249,6 +252,33 @@ describe('the automatic shutter', () => {
     expect(controller.profileJson(CAMERA)).toContain('camerasource/camera-intrinsics');
     // Nothing left scheduled: a session that ended must stop costing frames.
     expect(clock.waiting()).toBe(0);
+  });
+
+  it('ends in an error, not solved, when the camera settings changed under the session', async () => {
+    // Solved has to mean usable on this camera. Focus switched to manual
+    // half way through: Camera Source would judge the profile not to fit the
+    // camera it was solved on, so there is nothing worth handing over.
+    let focusMode = 'continuous';
+    const {controller, clock, release} = await started({
+      conditions: () => ({width: 800, height: 600, deviceId: 'device-1', label: 'Camera', focusMode})
+    });
+    focusMode = 'manual';
+    await clock.run(14);
+    expect(controller.state(CAMERA)).toBe('error');
+    expect(controller.errorCode(CAMERA)).toBe('capture-condition-mismatch');
+    expect(controller.errorMessage(CAMERA)).toContain('focus mode continuous -> manual');
+    expect(controller.guidance(CAMERA)).not.toBe('keep-going');
+    expect(controller.profileJson(CAMERA)).toBe('');
+    expect(release).toHaveBeenCalled();
+    expect(clock.waiting()).toBe(0);
+  });
+
+  it('solves when the camera settings held for the whole session', async () => {
+    const {controller, clock} = await started({
+      conditions: () => ({width: 800, height: 600, deviceId: 'device-1', label: 'Camera', focusMode: 'continuous', frameRate: 30})
+    });
+    await clock.run(14);
+    expect(controller.state(CAMERA)).toBe('solved');
   });
 
   it('will not finish on the fit error alone, and says which number failed', async () => {
