@@ -355,7 +355,7 @@ block referenceは
 | プロファイルと異なるサイズのframe、またはCamera Sourceがプロファイルに合わないと判定するカメラで板の姿勢を測る | Camera Sourceの理由を添えて`calibration-not-applicable`。比較できない設定や、補正済み画像のプロファイルも含みます。計測せずにカメラを解放します。設定を記録していないプロファイル、または設定をまったく報告しないCamera Sourceでは、これまでどおり計測します |
 | 校正の無いカメラ、または板が写っていない状態で姿勢を測る | `not-calibrated` または `board-pose-unavailable` |
 | solve成功 | ただちにカメラのleaseを解放します |
-| project停止・project再読込・runtime破棄 | すべてのセッションを取り消し、すべてのleaseを解放します。solveまたはimportしたプロファイルはプロジェクトではなくカメラを表すため、project停止・再読込では保持し、runtime破棄とcleanupブロックで破棄します |
+| project停止・project再読込・runtime破棄 | すべてのセッションを取り消し、すべてのleaseを解放します。solveまたはimportしたプロファイルはプロジェクトではなくカメラを表すため、project停止・再読込では保持し、セッションの残っていないカメラは数値ごと`solved`のままです。runtime破棄とcleanupブロックで破棄します |
 | 無効な入力 | セッション状態を変更する前に拒否します。boardを打ち間違えた再開始も、実行中のセッションを壊しません |
 | `DICT_4X4_50`の50個を超えるマーカーが必要な板（例: 10×9は55個） | 最初のframeではなく開始時に`invalid-board`で拒否します |
 

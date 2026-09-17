@@ -198,11 +198,15 @@ class CameraCalibration {
   private samples: CalibrationSample[] = [];
   private acquiring: Promise<void> | undefined;
   private sampling: Promise<void> | undefined;
+  /** Whether `sampling` is the shutter's own look, not one that was asked for. */
+  private samplingAutomatically = false;
   private solving: Promise<void> | undefined;
   /** Whether `solving` is the shutter's background solve, not one that was asked for. */
   private solvingAutomatically = false;
   private profile: CameraIntrinsicsV1 | undefined;
   private boardPose: string = '';
+  /** A board pose being measured, so a cancel can wait for it to hand its camera back. */
+  private measuring: Promise<void> | undefined;
   private sessionSampleCount = 0;
   private sampleQuality = 0;
   private reprojectionError = 0;
@@ -287,6 +291,10 @@ class CameraCalibration {
       frame = await this.awaitFirstFrame(lease, operation);
     } catch (error) {
       await lease.release();
+      // A cancel while the camera started is not a camera failure. The start
+      // it interrupted ends quietly, as it does when the cancel arrives while
+      // the camera is being acquired.
+      if (operation !== this.operation) return;
       this.fail('camera-ended', error);
     }
     if (operation !== this.operation) {
@@ -316,15 +324,29 @@ class CameraCalibration {
     this.calibrationState = 'ready';
   }
 
+  /**
+   * Takes one view by hand.
+   *
+   * Always answers with a promise, refusals included: the capability promises
+   * a rejection, and a caller attaching `.catch` to a call that throws instead
+   * never reaches it.
+   */
   public addSample(): Promise<void> {
-    if (this.sampling) return this.sampling;
+    if (this.sampling) {
+      // Another request for the same view shares it. The shutter's look is not
+      // that: it declines a frame quietly, and handing that back would answer
+      // "add a sample" with a success that added nothing. It is waited for,
+      // and this view is taken as asked.
+      if (!this.samplingAutomatically) return this.sampling;
+      return this.sampling.catch(() => undefined).then(() => this.addSample());
+    }
     // Also while the shutter solves in the background, where the state stays
     // `ready`. A view added then is in neither the fit nor the hold-out, and
     // the profile that solve produces would still count it.
     if (!this.session || !this.lease || this.calibrationState !== 'ready' || this.solving) {
-      throw new Error(`Camera ${this.cameraId} calibration is not ready to sample.`);
+      return Promise.reject(new Error(`Camera ${this.cameraId} calibration is not ready to sample.`));
     }
-    return this.track(this.captureSample(this.operation));
+    return this.track(this.captureSample(this.operation), false);
   }
 
   /**
@@ -392,8 +414,16 @@ class CameraCalibration {
         (AUTOMATIC_COMPLETE_SAMPLES - MINIMUM_SAMPLES),
       // The answer holding up on the views it was not fitted to. Before a
       // solve has run there is nothing to hold up, and that is not progress.
-      this.holdoutCount > 0 && this.holdoutError > 0
-        ? session.maximumReprojectionErrorPx / this.holdoutError
+      // Only an answer the solve itself would accept counts: enough views
+      // scored, and a fit within the limit. A refused solve reaching the last
+      // step would read as solved, and the count never falls back.
+      this.holdoutCount >= MINIMUM_HOLDOUT_VIEWS &&
+      Number.isFinite(this.reprojectionError) &&
+      this.reprojectionError <= session.maximumReprojectionErrorPx &&
+      Number.isFinite(this.holdoutError)
+        ? this.holdoutError > 0
+          ? session.maximumReprojectionErrorPx / this.holdoutError
+          : 1
         : 0
     ];
     let steps = 0;
@@ -484,7 +514,7 @@ class CameraCalibration {
     if (!this.automatic || operation !== this.operation) return;
     if (!this.sampling && !this.solving && this.lease && this.calibrationState === 'ready') {
       try {
-        await this.track(this.captureSample(operation, true));
+        await this.track(this.captureSample(operation, true), true);
         this.automaticFailures = 0;
       } catch {
         // Already recorded. A session that ended leaves nothing to watch; one
@@ -508,10 +538,14 @@ class CameraCalibration {
   }
 
   /** Runs `sampling` while recording it, so a manual sample cannot overlap. */
-  private track(sampling: Promise<void>): Promise<void> {
+  private track(sampling: Promise<void>, automatic: boolean): Promise<void> {
     this.sampling = sampling;
+    this.samplingAutomatically = automatic;
     const clear = () => {
-      if (this.sampling === sampling) this.sampling = undefined;
+      if (this.sampling === sampling) {
+        this.sampling = undefined;
+        this.samplingAutomatically = false;
+      }
     };
     void sampling.then(clear, clear);
     return sampling;
@@ -595,7 +629,26 @@ class CameraCalibration {
     await this.finishSolve(session, lease, solution, fitted.length, true);
   }
 
+  /**
+   * Solves as asked. Always answers with a promise, refusals included; see
+   * `addSample`.
+   */
   public solve(): Promise<void> {
+    try {
+      return this.beginSolve();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  private beginSolve(): Promise<void> {
+    // A view being taken finishes first. The shutter's look leaves the state
+    // at `ready`, so nothing else would stop a solve starting under it -- and
+    // the view it lands would be in neither the fit nor the hold-out, while
+    // setting the state back to `ready` in the middle of the solve.
+    if (this.sampling) {
+      return this.sampling.catch(() => undefined).then(() => this.solve());
+    }
     if (this.solving) {
       // A solve that was asked for answers the one asking. The shutter's own
       // solve does not: it ends quietly when the set is not good enough, and
@@ -640,18 +693,34 @@ class CameraCalibration {
   public async cancel(): Promise<void> {
     this.stopAutomatic();
     this.guide('');
-    this.operation += 1;
-    if (this.lease || this.acquiring || this.sampling || this.solving) {
-      this.calibrationState = 'cancelling';
+    const operation = ++this.operation;
+    const inSession = Boolean(
+      this.session || this.lease || this.acquiring || this.sampling || this.solving
+    );
+    // A board pose being measured holds a camera of its own. It is waited for
+    // so that its camera is back, and its solver no longer in use, by the time
+    // a cleanup goes on to dispose of that solver.
+    const measuring = this.measuring;
+    if (!inSession && this.calibrationState === 'solved') {
+      // Nothing to cancel. Project stop -- which a green flag also sends --
+      // arrives here after every solve, and a solved camera reporting `idle`
+      // with its numbers zeroed would say no calibration exists while its
+      // profile is still being served.
+      await measuring?.catch(() => undefined);
+      return;
     }
+    if (inSession) this.calibrationState = 'cancelling';
     // The acquisition is awaited too, so that a start racing this cancel has
     // handed its lease back by the time cancel resolves.
-    const pending = [this.acquiring, this.sampling, this.solving].filter(isPromise);
+    const pending = [this.acquiring, this.sampling, this.solving, measuring].filter(isPromise);
     const lease = this.lease;
     this.lease = undefined;
     this.session = undefined;
     await Promise.allSettled(pending);
     await lease?.release();
+    // A start that began while this was waiting owns the camera now, and the
+    // session it built is not this cancel's to clear.
+    if (operation !== this.operation) return;
     this.samples = [];
     this.sessionSampleCount = 0;
     this.sampleQuality = 0;
@@ -677,7 +746,17 @@ class CameraCalibration {
    * there is no single position to report. This takes its own camera lease,
    * reads one frame, and gives it straight back.
    */
-  public async measureBoardPose(options: BoardPoseOptions): Promise<void> {
+  public measureBoardPose(options: BoardPoseOptions): Promise<void> {
+    const measuring = this.measurePose(options, this.operation);
+    this.measuring = measuring;
+    const clear = () => {
+      if (this.measuring === measuring) this.measuring = undefined;
+    };
+    void measuring.then(clear, clear);
+    return measuring;
+  }
+
+  private async measurePose(options: BoardPoseOptions, operation: number): Promise<void> {
     const profile = this.profile;
     if (!profile) {
       this.refuse(
@@ -722,6 +801,7 @@ class CameraCalibration {
       // settings at all -- one withholding its calibration capability, or one
       // from before it could -- cannot say they changed either, and measuring
       // as before is what it did.
+      if (operation !== this.operation) return;
       const conditions = cameraConditionsOf(this.runtime, this.cameraId);
       const objections = conditions ? compatibilityObjections(profile, conditions) : [];
       if (objections.length > 0) {
@@ -741,6 +821,8 @@ class CameraCalibration {
           reprojectionErrorPx: profile.quality?.reprojectionErrorPx ?? 0
         }
       );
+      // Cancelled or cleaned up meanwhile: the pose belongs to nobody now.
+      if (operation !== this.operation) return;
       if (!pose) {
         this.refuse(
           'board-pose-unavailable',
@@ -789,23 +871,10 @@ class CameraCalibration {
     } catch (error) {
       this.failValidation(error);
     }
-    if (profile.cameraId !== this.cameraId) {
-      this.failValidation(
-        new CalibrationApplicabilityError(
-          `The profile calibrates camera ${profile.cameraId} and cannot be applied to camera ${this.cameraId}.`
-        )
-      );
-    }
-    const session = this.session;
-    if (
-      session &&
-      (session.imageWidth !== profile.imageWidth || session.imageHeight !== profile.imageHeight)
-    ) {
-      this.failValidation(
-        new CalibrationApplicabilityError(
-          `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${session.imageWidth}x${session.imageHeight}.`
-        )
-      );
+    try {
+      this.assertApplicable(profile);
+    } catch (error) {
+      this.failValidation(error);
     }
     await this.cancel();
     this.profile = profile;
@@ -814,9 +883,33 @@ class CameraCalibration {
     this.calibrationState = 'solved';
   }
 
+  /**
+   * Whether a valid profile may be applied to this camera as it is now.
+   *
+   * Shared by import and validation, because validation answers whether the
+   * JSON would be adopted: a profile it accepts and import then refuses is a
+   * yes that was not one.
+   */
+  private assertApplicable(profile: CameraIntrinsicsV1): void {
+    if (profile.cameraId !== this.cameraId) {
+      throw new CalibrationApplicabilityError(
+        `The profile calibrates camera ${profile.cameraId} and cannot be applied to camera ${this.cameraId}.`
+      );
+    }
+    const session = this.session;
+    if (
+      session &&
+      (session.imageWidth !== profile.imageWidth || session.imageHeight !== profile.imageHeight)
+    ) {
+      throw new CalibrationApplicabilityError(
+        `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${session.imageWidth}x${session.imageHeight}.`
+      );
+    }
+  }
+
   public validateProfile(json: string): boolean {
     try {
-      parseCalibrationProfile(json);
+      this.assertApplicable(parseCalibrationProfile(json));
       // Only a previous validation failure is answered here. A session
       // diagnostic, such as a refused solve, is not resolved by some other
       // JSON turning out to be valid.
@@ -1131,6 +1224,17 @@ class CameraCalibration {
    */
   private decline(guidance: CalibrationGuidance): void {
     if (this.lease) this.calibrationState = 'ready';
+    // A view too like one held is what follows most looks at a board that has
+    // not moved yet, 250 ms after the set was judged. It does not replace what
+    // the set as a whole still needs -- more tilt, or more variety -- which is
+    // the instruction the operator has to hear. Anything that stops the next
+    // view being read at all still does.
+    if (
+      guidance === 'move-or-tilt' &&
+      (this.guidanceCode === 'tilt-more' || this.guidanceCode === 'vary-more')
+    ) {
+      return;
+    }
     this.guide(guidance);
   }
 

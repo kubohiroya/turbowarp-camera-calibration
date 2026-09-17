@@ -195,7 +195,7 @@ describe('CameraCalibrationController', () => {
   it('rejects insufficient, low-quality, missing, and duplicate samples distinctly', async () => {
     const insufficient = setup();
     await insufficient.controller.start(startOptions);
-    expect(() => insufficient.controller.solve('camera-1')).toThrow(/sample-insufficient/u);
+    await expect(insufficient.controller.solve('camera-1')).rejects.toThrow(/sample-insufficient/u);
 
     const missing = setup();
     missing.captureSample.mockResolvedValue({markersSeen: 0});
@@ -831,11 +831,9 @@ describe('CameraCalibrationController', () => {
     await controller.start(startOptions);
     await fillSamples(controller);
     expect(controller.sampleCount('camera-1')).toBe(8);
-    // Thrown rather than rejected: solve checks what it was given before it
-    // starts, the same way it refuses a set that is too small.
-    expect(() => controller.solve('camera-1')).toThrowError(
-      /sample-poses-degenerate/u
-    );
+    // Rejected, as the capability promises, although it is decided before the
+    // solve starts.
+    await expect(controller.solve('camera-1')).rejects.toThrow(/sample-poses-degenerate/u);
     expect(controller.errorCode('camera-1')).toBe('sample-poses-degenerate');
     // Refused, not failed: the samples are still there and the operator can
     // tilt the board and keep going.
@@ -869,16 +867,95 @@ describe('CameraCalibrationController', () => {
   });
 
   it('forgets the holdout result when the session is cancelled', async () => {
+    const {controller, validate} = setup();
+    validate.mockResolvedValue({reprojectionErrorPx: 4, sampleCount: 2});
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) {
+      await controller.addSample('camera-1');
+    }
+    await expect(controller.solve('camera-1')).rejects.toThrow(/reprojection-too-high/u);
+    expect(controller.holdoutSampleCount('camera-1')).toBe(2);
+    await controller.cancel('camera-1');
+    expect(controller.holdoutSampleCount('camera-1')).toBe(0);
+    expect(controller.latestHoldoutError('camera-1')).toBe(0);
+    expect(controller.state('camera-1')).toBe('idle');
+  });
+
+  it('keeps a solved result through a cancel with nothing to cancel', async () => {
+    // Project stop -- which a green flag also sends -- cancels every camera.
+    // After a solve there is no session left, and reporting `idle` with the
+    // numbers zeroed would say no calibration exists while its profile is
+    // still served.
     const {controller} = setup();
     await controller.start(startOptions);
     for (let index = 0; index < 12; index += 1) {
       await controller.addSample('camera-1');
     }
     await controller.solve('camera-1');
+    await controller.cancelAll();
+    expect(controller.state('camera-1')).toBe('solved');
+    expect(controller.sampleCount('camera-1')).toBe(12);
+    expect(controller.latestReprojectionError('camera-1')).toBe(0.75);
     expect(controller.holdoutSampleCount('camera-1')).toBe(2);
+    expect(controller.progress('camera-1')).toBe(16);
+    expect(controller.profileJson('camera-1')).not.toBe('');
+  });
+
+  it('answers refusals from the capability surface as rejections, not throws', async () => {
+    // A caller attaching .catch to a call that throws never reaches it.
+    const {controller} = setup();
+    const notReady = controller.addSample('camera-1');
+    expect(notReady).toBeInstanceOf(Promise);
+    await expect(notReady).rejects.toThrow(/not ready to sample/u);
+    await controller.start(startOptions);
+    const tooFew = controller.solve('camera-1');
+    expect(tooFew).toBeInstanceOf(Promise);
+    await expect(tooFew).rejects.toThrow(/sample-insufficient/u);
+  });
+
+  it('does not let a cancel that finishes late clear the session started after it', async () => {
+    const {controller, lease} = setup();
+    let released: (() => void) | undefined;
+    await controller.start(startOptions);
+    lease.release = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          released = resolve;
+        })
+    );
+    const cancelling = controller.cancel('camera-1');
+    // The new session is up before the old cancel's release comes back.
+    await controller.start(startOptions);
+    expect(controller.state('camera-1')).toBe('ready');
+    released?.();
+    await cancelling;
+    expect(controller.state('camera-1')).toBe('ready');
+    await controller.addSample('camera-1');
+    expect(controller.sampleCount('camera-1')).toBe(1);
+  });
+
+  it('lets a cancel during camera start end the start quietly', async () => {
+    const {controller, frame} = setup();
+    frame.width = 0;
+    const starting = controller.start(startOptions);
+    await flushMicrotasks();
     await controller.cancel('camera-1');
-    expect(controller.holdoutSampleCount('camera-1')).toBe(0);
-    expect(controller.latestHoldoutError('camera-1')).toBe(0);
+    await expect(starting).resolves.toBeUndefined();
+    expect(controller.state('camera-1')).toBe('idle');
+    expect(controller.errorCode('camera-1')).toBe('');
+  });
+
+  it('validates a profile the way import would adopt it', async () => {
+    const {controller} = setup();
+    const other = JSON.stringify({
+      ...(JSON.parse(await fixture('valid-camera-intrinsics-v1.json')) as object),
+      cameraId: 'camera-2'
+    });
+    expect(controller.validateProfile('camera-1', other)).toBe(false);
+    expect(controller.errorCode('camera-1')).toBe('calibration-not-applicable');
+    await expect(controller.importProfile('camera-1', other)).rejects.toThrow(
+      /calibration-not-applicable/u
+    );
   });
 
   it('publishes a solved profile through the Camera Source contract', async () => {

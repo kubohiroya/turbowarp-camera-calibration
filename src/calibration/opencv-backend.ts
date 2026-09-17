@@ -223,13 +223,18 @@ export class OpenCvChessboardCalibration {
 
   /** Where each inner corner sits on the board, in metres. */
   private worldPointsFor(cv: CvApi, board: CalibrationBoard): number[][] {
+    // A fresh vector on every call, owned here: embind frees nothing on its own.
     const corners = this.entryFor(cv, board).board.getChessboardCorners();
-    const points: number[][] = [];
-    for (let index = 0; index < corners.size(); index += 1) {
-      const point = corners.get(index);
-      points.push([point.x, point.y, point.z ?? 0]);
+    try {
+      const points: number[][] = [];
+      for (let index = 0; index < corners.size(); index += 1) {
+        const point = corners.get(index);
+        points.push([point.x, point.y, point.z ?? 0]);
+      }
+      return points;
+    } finally {
+      corners.delete();
     }
-    return points;
   }
 
   public async captureSample(
@@ -438,19 +443,24 @@ export class OpenCvChessboardCalibration {
       if (!cornersSpanBoard(identifiers, board)) return undefined;
       const worldPoints = this.worldPointsFor(cv, board);
 
+      // Each one owned by the cleanup as soon as it exists, so a later
+      // allocation that throws cannot strand the ones before it.
       const objectPoint = cv.matFromArray(
         identifiers.length,
         1,
         cv.CV_32FC3,
         identifiers.flatMap((id) => worldPoints[id] ?? [0, 0, 0])
       );
+      scratch.push(objectPoint);
       const imagePoint = cv.matFromArray(
         observed.length,
         1,
         cv.CV_32FC2,
         observed.flatMap(({x, y}) => [x, y])
       );
+      scratch.push(imagePoint);
       const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
+      scratch.push(cameraMatrix);
       const distortion = cv.matFromArray(
         Math.max(1, solution.distortionCoefficients.length),
         1,
@@ -459,10 +469,11 @@ export class OpenCvChessboardCalibration {
           ? solution.distortionCoefficients
           : [0]
       );
+      scratch.push(distortion);
       const rotation = new cv.Mat();
       const translation = new cv.Mat();
       const projected = new cv.Mat();
-      scratch.push(objectPoint, imagePoint, cameraMatrix, distortion, rotation, translation, projected);
+      scratch.push(rotation, translation, projected);
 
       if (!cv.solvePnP(objectPoint, imagePoint, cameraMatrix, distortion, rotation, translation)) {
         return undefined;

@@ -97,7 +97,11 @@ export interface CameraCalibrationCapabilityV1 {
   solve(cameraId: string): Promise<void>;
   /** Hands the solved profile to Camera Source, which owns the profile contract. */
   publish(cameraId: string): Promise<void>;
-  /** Ends the session and releases the camera lease. Keeps the solved profile. */
+  /**
+   * Ends the session and releases the camera lease. Keeps the solved profile,
+   * and a camera with no session left to end -- one already solved -- stays
+   * `solved` with its numbers.
+   */
   cancel(cameraId: string): Promise<void>;
   /** Ends the session and forgets the solved profile as well. */
   cleanup(cameraId: string): Promise<void>;

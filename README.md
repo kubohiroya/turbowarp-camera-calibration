@@ -635,7 +635,7 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 | Board pose measured on a frame of another size than the profile, or on a camera Camera Source does not judge the profile to fit | `calibration-not-applicable` with Camera Source's reasons, including a setting it cannot compare and a profile of already undistorted images; nothing is measured and the camera is released. A profile that recorded no settings, or a Camera Source that reports none, is measured with as before |
 | Board pose requested without a calibration, or with the board out of view | `not-calibrated` or `board-pose-unavailable` |
 | Solve succeeds | The camera lease is released immediately |
-| Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released. A solved or imported profile is kept across a project stop or reload, because it describes the camera rather than the project; runtime disposal and the cleanup block forget it |
+| Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released. A solved or imported profile is kept across a project stop or reload, because it describes the camera rather than the project, and a camera with no session left stays `solved` with its numbers; runtime disposal and the cleanup block forget it |
 | Invalid input | Rejected before any session state changes, including a restart with a mistyped board |
 | A board needing more than the 50 markers of `DICT_4X4_50` (for example 10 by 9, which needs 55) | `invalid-board`, at the start rather than at the first frame |
 
