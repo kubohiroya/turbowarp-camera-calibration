@@ -4,19 +4,19 @@
 
 A TurboWarp extension that calibrates a camera shared through
 [TurboWarp-Camera-Source](https://github.com/kubohiroya/turbowarp-camera-source)
-and publishes the resulting intrinsic calibration profile.
+against a ChArUco board and publishes the resulting intrinsic calibration profile.
 
 **User guide:** [English](https://kubohiroya.github.io/turbowarp-camera-calibration/)
 
-> [!NOTE]
-> The calibration path ships behind a startup feature flag that defaults to OFF.
-> See [Enabling calibration](#enabling-calibration).
-
 ## What it does
 
-- Runs a chessboard calibration session against a camera leased from Camera Source, at the camera's real capture resolution.
-- Solves the camera intrinsic matrix and distortion coefficients, and reports the RMS reprojection error.
+- Runs a ChArUco calibration session against a camera leased from Camera Source, at the camera's real capture resolution.
+- Takes the samples itself if asked: an automatic shutter watches the frame, tells the operator what to do next, re-solves in the background, and finishes once the answer holds on views it was not fitted to.
+- Solves the camera intrinsic matrix and distortion coefficients on a Web Worker, and reports both the fit and the hold-out RMS reprojection error.
+- Records the capture conditions the camera reported, so Camera Source can later decide whether the profile fits the camera in front of it.
 - Publishes an intrinsic calibration profile that AR, photogrammetry, and motion capture extensions can share.
+- Draws the boards it looks for, so a page or an app that shows or prints one shows exactly that board.
+- Measures where a board that has stopped moving is, in the camera's own frame, for placement tools to re-solve into a shared frame.
 
 Intrinsic calibration and external pose stay separate. A profile describes one
 camera's optics; it never carries a world pose, and a pose that was not measured
@@ -24,19 +24,25 @@ is never filled in with identity.
 
 ## Why calibration lives in its own extension
 
-The OpenCV build required to detect a chessboard and solve `calibrateCamera` is
-roughly 10 MB. TurboWarp extensions ship as a single standalone bundle, so a
-dynamic `import()` does not split that weight out: it is inlined into the same
-file. Keeping the solver here lets Camera Source stay a small, dependency-free
-capability that every camera consumer can afford to load. A startup flag cannot
-substitute for this split, because a flag gates execution, not bytes.
+Detecting a ChArUco board and solving `calibrateCameraExtended` needs OpenCV.
+TurboWarp extensions ship as a single standalone bundle, so a dynamic `import()`
+does not split that weight out: it is inlined into the same file. Keeping the
+solver here lets Camera Source stay a small, dependency-free capability that
+every camera consumer can afford to load.
+
+The OpenCV inside is not the stock build. The stock build never finishes
+initializing in a Web Worker, which is where the solver has to run to keep the
+camera preview moving. It is rebuilt from OpenCV `4.12.0` with
+`ENVIRONMENT=web,worker` and a whitelist of the symbols this extension calls:
+3.85 MB instead of 10.9 MB. See [`tools/opencv/`](tools/opencv/) and
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 The responsibilities split as follows.
 
 | Package | Owns |
 |---|---|
-| `@kubohiroya/turbowarp-camera-source` | Camera acquisition, lease sharing, preview, and the calibration profile contract (schema, validation, applicability) |
-| `@kubohiroya/turbowarp-camera-calibration` | The calibration procedure: chessboard sampling, solving, and profile publication |
+| `@kubohiroya/turbowarp-camera-source` | Camera acquisition, lease sharing, preview, capture conditions, and the calibration profile contract (schema, validation, applicability) |
+| `@kubohiroya/turbowarp-camera-calibration` | The calibration procedure: board definitions and drawing, manual and automatic sampling, solving and hold-out validation, board pose measurement, and profile publication |
 
 ## Documentation and block icon
 
@@ -49,7 +55,7 @@ This extension publishes its English user documentation with GitHub Pages.
 
 - TurboWarp Desktop, Web, and Packager.
 - `@kubohiroya/turbowarp-camera-source` must be loaded first; this extension never opens a camera itself.
-- A printed chessboard calibration target, flat and unglossy. The board arguments count **inner corners**, not printed squares: a 10×7 square board is `9` by `6`.
+- A ChArUco board, flat and unglossy: a chessboard with a marker from OpenCV's `DICT_4X4_50`, numbered from 0, inside each light square. The board arguments count **inner corners**, not printed squares: a 10×7 square board is `9` by `6`. Draw it with the [`./runtime`](#drawing-the-board) helpers rather than another generator, so the markers match.
 - Must run without the sandbox.
 
 > [!IMPORTANT]
@@ -57,32 +63,66 @@ This extension publishes its English user documentation with GitHub Pages.
 > Source capability through the TurboWarp runtime. Load unsandboxed extension
 > code only from a source you trust.
 
-Camera frames are read only to detect the chessboard. Nothing is uploaded, and a
+Camera frames are read only to detect the board. Nothing is uploaded, and a
 profile that carries a pairing credential is rejected rather than stored.
 
 ### Capture conditions for a usable result
 
 | Condition | Why |
 |---|---|
-| At least 8 accepted samples, at most 40 | Fewer views leave the distortion terms under-determined |
-| Vary the board angle by roughly 20°–45° across samples | Views that are all fronto-parallel cannot separate focal length from distance |
-| Vary the distance, and fill different parts of the frame, including the corners | Distortion is strongest away from the image center |
-| Keep the whole board inside the frame and in focus | A partially visible or blurred board is rejected as `board-not-found` or `sample-low-quality` |
-| Do not change resolution, camera device, mirroring, focus, or zoom during a session | The session is fixed to the resolution it started with and rejects changed conditions |
+| At least 8 accepted samples to solve by hand; the automatic path collects 12 or more and holds about a fifth back | Fewer views leave the distortion terms under-determined, and a solve with nothing held back cannot be validated |
+| Tilt the board roughly 20°–45° in different directions across samples | Views that are all fronto-parallel cannot separate focal length from distance. Sliding the board sideways does not help, and a set that was never tilted is refused as `sample-poses-degenerate` |
+| Vary the distance, and fill different parts of the frame, including the corners | Distortion is strongest away from the image center. The markers name the corners, so a board that runs off the frame still contributes the corners it shows |
+| Keep the board in focus and hold it still for a moment | A blurred view is refused as `sample-low-quality`, or the automatic path asks to `hold-steadier` |
+| Do not change resolution, camera device, mirroring, resize mode, focus, or zoom during a session | The session is fixed to the conditions it started with; a change ends it with `capture-condition-mismatch` rather than a profile that does not fit the camera |
+| Prefer a printed board or a 1:1 display; avoid projectors | Keystone correction, oblique projection, and the projector's own lens distort the board in ways the reprojection error does not show |
 
-Verify a finished calibration against images that were not part of the solve. A
-low reprojection error on the calibration samples alone does not prove the
-result generalizes.
+Verify a finished calibration against images that were not part of the solve.
+A low reprojection error on the calibration samples alone does not prove the
+result generalizes; that is what the hold-out error is for.
+
+## Automatic capture
+
+The operator is holding a board at arm's length and cannot also press a button
+at the right moment. `start automatic calibration capture` hands the shutter to
+the extension:
+
+- Every 250 ms it looks at the shared frame and retains the view only when it would be accepted.
+- Once there are enough views it solves in the background, without releasing the camera or changing the state.
+- It finishes the session when the hold-out error is within the session limit. The fit error alone never finishes it.
+- At 40 views it does not stop: the view most like the others is dropped for the new one.
+
+A frame that cannot be used is not an error on this path. It leaves guidance for
+the operator instead:
+
+| Guidance | Meaning |
+|---|---|
+| `show-the-board` | Nothing is visible |
+| `wrong-board` | Markers are visible but no corners of the selected board: another board, or the right one at an unreadable angle |
+| `hold-steadier` | The view is blurred |
+| `move-or-tilt` | The view is too much like one already kept |
+| `tilt-more` | The kept views are not tilted enough to solve from |
+| `keep-going` | The background solve cannot reproduce even its own samples yet |
+| `vary-more` | It reproduces its own samples but not the held-back ones: the views are too alike |
+| `solving` / `complete` | Working, or done |
+
+Three reporters let a project give continuous cues to someone who is not looking
+at the screen:
+
+- **tilt direction**: `top-near`, `top-far`, `left-near`, or `right-near`, whichever direction the kept views reach least.
+- **novelty**: 0 to 1, how much the view in front of the camera would add. It is measured on tilt, so sliding the board does not raise it.
+- **progress**: 0 to 16, four gates of four steps — enough views to solve, enough tilt among them, enough to hold some back, and an answer that holds on the held-back views. It counts up to the first gate not yet passed, and never goes down.
 
 ## When the solver loads
 
 Every block is in the palette as soon as the extension is registered, and the
 runtime capability is on the runtime. Nothing is switched on separately.
 
-The OpenCV runtime is not loaded with the extension. It is created on the first
-sample or solve and never before, so a project that only reads
-`camera calibration state` or `camera calibration backend` pays nothing for it.
-No camera lease is taken until a calibration starts.
+The Worker and its OpenCV runtime are created on first use, never at load time,
+so a project that only reads `camera calibration state` or
+`camera calibration backend` pays nothing for them. No camera lease is taken
+until a calibration or a measurement starts. Frames cross to the Worker as
+transferred pixel buffers, not copies.
 
 ## Installation
 
@@ -94,8 +134,8 @@ No camera lease is taken until a calibration starts.
 4. Enable **Run extension without sandbox**.
 
 The reviewed JavaScript build is committed to this repository, so users do not
-need Node.js to install the extension. The build inlines OpenCV.js and is
-therefore about 11 MB.
+need Node.js to install the extension. The build inlines the custom OpenCV.js
+and is about 3.9 MB (about 1.5 MB gzip).
 
 ### npm package
 
@@ -120,13 +160,24 @@ https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.13.0/dis
 ## Quick start
 
 1. Load Camera Source and start the shared camera you want to calibrate.
-2. Load this extension with the calibration flag enabled.
-3. Start a session, capture views of the board from different angles and distances, then solve.
+2. Load this extension.
+3. Start a session with the board you are holding, and let the shutter run.
 
 ```text
 start shared camera [default]
-start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m max error [1.5] px
-repeat until <camera [default] calibration sample count = 12>
+start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m marker [0.018] m max error [1.5] px
+start automatic calibration capture for camera [default]
+repeat until <not <automatic capture running for camera [default]?>>
+  say (camera calibration guidance [default])
+if <(camera calibration state [default]) = [solved]> then
+  publish calibration profile for camera [default]
+```
+
+To take the samples by hand instead:
+
+```text
+start camera [default] calibration [calibration-1] board [9] by [6] square [0.025] m marker [0.018] m max error [1.5] px
+repeat until <(camera [default] calibration sample count) = 12>
   add calibration sample for camera [default]
 solve calibration for camera [default]
 publish calibration profile for camera [default]
@@ -152,7 +203,9 @@ The solved profile is intrinsics only:
   "intrinsicMatrix": [700, 0, 400, 0, 700, 300, 0, 0, 1],
   "distortionModel": "opencv-plumb-bob",
   "distortionCoefficients": [0.01, -0.02, 0, 0, 0],
-  "quality": {"sampleCount": 8, "reprojectionErrorPx": 0.75},
+  "quality": {"sampleCount": 12, "reprojectionErrorPx": 0.75},
+  "capture": {"resizeMode": "none", "zoom": 1, "focusMode": "manual", "focusDistance": 0.4},
+  "device": {"label": "USB Camera"},
   "calibratedAt": "2026-09-13T12:00:00.000Z"
 }
 ```
@@ -161,6 +214,8 @@ The solved profile is intrinsics only:
 - `imageState` is `raw`: the coefficients still have to be applied. `undistorted` states that the image is already corrected and they must not be applied again.
 - `distortionCoefficients` are in OpenCV order and their count must match `distortionModel`.
 - `quality` is absent when the producer did not measure it.
+- `capture` holds the settings that change how the lens projects (`resizeMode`, `zoom`, `focusMode`, `focusDistance`, `frameRate`, `facingMode`), as Camera Source reported them when the session started. A value the camera did not report is left out, never guessed. Without it, Camera Source can only answer `undetermined` when asked whether the profile fits.
+- `device` is what the camera called itself: a hint for matching, never proof.
 - Preview mirroring is a display concern. Profile coordinates are always the unmirrored capture coordinates.
 
 [`schemas/camera-intrinsics-v1.schema.json`](schemas/camera-intrinsics-v1.schema.json)
@@ -173,6 +228,62 @@ Profiles written by `@kubohiroya/turbowarp-realtime-motion-capture`
 (`twrmc/camera-calibration` v1) are accepted on import. Their
 `worldFromCameraMatrix` is dropped rather than reinterpreted, because a world
 pose is not part of an intrinsic profile.
+
+## Board pose
+
+A calibration needs the board to move, and a board that stays put is exactly the
+arrangement that cannot be calibrated. So measuring where a board is happens
+separately, after calibration, once the board is where it will stay.
+`measure camera [ID] board pose` takes a lease, solves the pose with the
+calibration already held for that camera, and gives the lease straight back.
+
+```json
+{
+  "schema": "twcc/board-pose",
+  "version": 1,
+  "cameraId": "camera-1",
+  "intrinsicProfileId": "calibration-1",
+  "imageWidth": 800,
+  "imageHeight": 600,
+  "board": {"columns": 9, "rows": 6, "squareSizeMeters": 0.025, "markerSizeMeters": 0.018},
+  "scaleSource": "measured",
+  "cameraFromBoard": {"rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1], "translationMeters": [0, 0, 0.8]},
+  "cornerCount": 54,
+  "reprojectionErrorPx": 0.4,
+  "observedPoints": [{"id": 0, "u": 312.5, "v": 208.1}],
+  "measuredAt": "2026-09-16T12:00:00.000Z"
+}
+```
+
+- It is the board in the camera's frame, and says so in its name. It is not a world pose.
+- Its scale comes entirely from the declared square size. `scaleSource` says whether someone put a ruler to it (`measured`) or not (`nominal`). A nominal pose is right in direction and off in scale by however much the print was, which the reprojection error does not show.
+- `observedPoints` travel with it, so `turbowarp-time-space-sync` can re-solve the same measurement into a shared frame.
+- Without a calibration for that camera the request is refused as `not-calibrated`; with too little of the board in view, as `board-pose-unavailable`.
+
+## Drawing the board
+
+The board this extension looks for and the board a page prints come from the
+same numbers. `./runtime` exports the definitions and an SVG renderer: pure
+arithmetic with no document, camera, or OpenCV behind them.
+
+```ts
+import {
+  BOARDS,
+  MARKER_RATIO,
+  PRINT_WIDTH_MM,
+  PRINT_HEIGHT_MM,
+  boardName,
+  layout,
+  patternSvg,
+  printedCellMillimetres
+} from '@kubohiroya/turbowarp-camera-calibration/runtime';
+```
+
+`BOARDS` holds the three supported boards (9×6, 7×5, and 5×4 inner corners), all
+numbering their markers from 0. A board shown to another board's detector yields
+no corners at all, which the extension reports as `wrong-board`.
+`pnpm board:check` renders each board in a browser and confirms that its own
+detector finds every corner and the other detectors find none.
 
 ## Block reference
 
@@ -490,15 +601,19 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 
 | Situation | Behavior |
 |---|---|
-| Calibration flag is OFF | Only the state reporter is published and it returns `idle`; commands refuse with an explicit error |
 | Camera Source is not loaded | `dependency-missing`; the extension never opens its own camera |
 | Camera Source has no profile registry, or another contract version | `api-version-mismatch` on publish; never a silent success, and the solved profile is kept |
 | Camera calibration has not run | The state reporter returns `idle` and the profile reporter returns an empty string |
-| Board not found, blurred, or too similar to a kept view | The sample is refused with its own error code and the session stays ready |
+| The camera has not delivered a sized frame yet | The session waits for one (every 30 ms, up to 4 s) instead of failing on a camera that is still starting |
+| Board not found, another board shown, blurred, or too similar to a kept view (by hand) | The sample is refused with `board-not-found`, `wrong-board`, `sample-low-quality`, or `sample-too-similar`, and the session stays ready |
+| The same, during automatic capture | No error; the guidance reporter says what to do instead |
+| 40 samples kept | By hand: `sample-limit`. Automatic: the view most like the others is replaced |
+| Solve from a set that was never tilted | `sample-poses-degenerate`; the session stays open for more samples |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
 | Resize mode, zoom, focus, or the camera changes before the solve | `capture-condition-mismatch`; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
 | Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added |
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
+| Board pose requested without a calibration, or with the board out of view | `not-calibrated` or `board-pose-unavailable` |
 | Solve succeeds | The camera lease is released immediately |
 | Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released |
 | Invalid input | Rejected before any session state changes, including a restart with a mistyped board |
@@ -518,24 +633,36 @@ import {
   readCameraCalibrationCapability
 } from '@kubohiroya/turbowarp-camera-calibration/runtime';
 
-const calibration = readCameraCalibrationCapability(Scratch.vm.runtime);
-if (!calibration) {
-  // Not loaded, or loaded with the calibration feature off. Either way there is
-  // no procedure to drive, and the caller has to say so rather than wait.
+const found = readCameraCalibrationCapability(Scratch.vm.runtime);
+if (!found) {
+  // Not loaded. There is no procedure to drive, and the caller has to say so
+  // rather than wait.
   return;
 }
 
-await calibration.requireVersion(1).start({
+const calibration = found.requireVersion(4);
+await calibration.start({
   cameraId: 'stage-left',
   calibrationId: 'session-1',
-  board: {columns: 9, rows: 6, squareSizeMeters: 0.025},
+  board: {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018},
   maximumReprojectionErrorPx: 1.5
 });
+calibration.setAutomatic('stage-left', true);
 ```
 
-The sub-entry holds declarations and two constants. It pulls in none of the
-extension, so importing it costs a consumer nothing at run time -- in
-particular, not the OpenCV build.
+The capability is at version 4. Every version so far has only added members, so
+`requireVersion` accepts any version from 1 up to the one this build provides:
+
+| Version | Added |
+|---|---|
+| 1 | Sessions, samples, solve, publish, import, validation, the state and quality reporters, hold-out results, and board pose measurement |
+| 2 | Automatic capture: `setAutomatic`, `automatic`, and `guidance` |
+| 3 | `novelty` and `tiltDirection` |
+| 4 | `progress`, with `CALIBRATION_GATES`, `CALIBRATION_STEPS_PER_GATE`, and `CALIBRATION_PROGRESS_STEPS` exported so consumers do not copy the number 16 |
+
+The sub-entry holds declarations, constants, and the board drawing helpers. It
+pulls in none of the extension, so importing it costs a consumer nothing at run
+time -- in particular, not the OpenCV build.
 
 `requireVersion` refuses a version this build does not implement, out loud. That
 is a different answer from the capability being absent: the extension is loaded
@@ -554,7 +681,9 @@ consumer that only wants to read, store, or check a profile talks to
 
 | Consumer | Relationship |
 |---|---|
-| `@kubohiroya/turbowarp-camera-source` | Required provider: supplies the camera lease and owns the profile contract |
+| `@kubohiroya/turbowarp-camera-source` | Required provider: supplies the camera lease and capture conditions, and owns the profile contract |
+| `@kubohiroya/turbowarp-camera-calibration-app` | Application that shows the boards, runs automatic calibration, and exports the profile as a list file and a QR code |
+| `@kubohiroya/turbowarp-time-space-sync` | Intended consumer of board pose measurements, to re-solve them into a shared frame |
 | `@kubohiroya/turbowarp-realtime-motion-capture` | Optional consumer of the published calibration profile |
 | `@kubohiroya/turbowarp-ar` | Optional consumer of the published calibration profile |
 | `@kubohiroya/turbowarp-photogrammetry` | Optional consumer of the published calibration profile |
@@ -572,8 +701,9 @@ private-field access as an integration API.
 | Extension ID | `kubohiroyacameracalibration` | Stored in SB3; migration required to change |
 | Stored profile schema | `camerasource/camera-intrinsics` v1 | Read and written by this extension |
 | Published profile schema | `twcs/camera-intrinsics` v1 | Owned by Camera Source |
-| Runtime capability | `kubohiroyaCameraCalibrationCapability` v1 | Read from the VM runtime |
-| Solve backend | `opencv-js-wasm-4.12.0` | Pinned; reported by a block |
+| Board pose schema | `twcc/board-pose` v1 | Written by this extension |
+| Runtime capability | `kubohiroyaCameraCalibrationCapability` v4 (accepts 1–4) | Read from the VM runtime |
+| Solve backend | `opencv-js-wasm-4.12.0-charuco` | Pinned; reported by a block |
 
 Document schema-aware migrations when an extension ID or opcode changes. Never
 instruct users to replace JavaScript alone when stored identifiers have changed.
@@ -596,8 +726,14 @@ Useful commands:
 | `pnpm test` | Run tests |
 | `pnpm docs` | Regenerate block documentation |
 | `pnpm check:dist` | Verify committed build artifacts |
+| `pnpm opencv:check` | Ask the real OpenCV build, in a browser, whether it provides every symbol the extension calls |
+| `pnpm board:check` | Show each drawn board to the detectors, in a browser |
 | `pnpm pack:check` | Inspect the npm package |
 | `pnpm release:check` | Dry-run the release |
+
+`opencv:check` and `board:check` start a browser and are not part of
+`pnpm check`; CI runs them as separate steps. Rebuilding OpenCV itself is
+described in [`tools/opencv/README.md`](tools/opencv/README.md).
 
 ## Release
 
@@ -605,14 +741,13 @@ Useful commands:
 2. Update the version in `package.json`.
 3. Run `pnpm check`.
 4. Merge the release PR.
-5. Create tag `v<version>` on the verified commit.
-6. Publish the same version to npm.
-7. Verify GitHub Release, npm tarball, GitHub Pages, `docsURI`, block icon, and CDN artifacts.
+5. Create tag `v<version>` on the verified commit; the release workflow publishes that version to npm.
+6. Verify GitHub Release, npm tarball, GitHub Pages, `docsURI`, block icon, and CDN artifacts.
 
 ## License
 
 [Mozilla Public License 2.0](LICENSE) (SPDX: `MPL-2.0`).
 
 Third-party components are listed in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The bundle inlines OpenCV.js
-`4.12.0-release.1`, distributed under the Apache License 2.0.
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The bundle inlines a build of
+OpenCV.js `4.12.0` made for this extension, distributed under the Apache License 2.0.
