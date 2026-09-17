@@ -45,7 +45,7 @@ function setup(pose: BoardPoseSolution | null = samplePose()) {
     backend: {name: 'mock-calibration-backend', create: async () => backend},
     nowMilliseconds: () => Date.parse('2026-09-16T12:00:00Z')
   });
-  return {controller, measurePose, release, acquireCamera};
+  return {controller, measurePose, release, acquireCamera, frame};
 }
 
 function samplePose(): BoardPoseSolution {
@@ -85,6 +85,36 @@ describe('measuring where the board is', () => {
     await expect(
       controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
     ).rejects.toThrow(/not-calibrated/u);
+    expect(acquireCamera).not.toHaveBeenCalled();
+  });
+
+  it('refuses a frame of another size than the profile calibrates', async () => {
+    // Intrinsics are in the pixels of the image they were solved at. Read
+    // against another size they still produce a pose -- plausible, and wrong
+    // by the ratio of the two -- so nothing downstream would notice.
+    const {controller, measurePose, release, frame} = setup();
+    await controller.importProfile('camera-1', PROFILE);
+    frame.width = 640;
+    frame.height = 480;
+    await expect(
+      controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
+    ).rejects.toThrow(/calibration-not-applicable/u);
+    expect(controller.errorCode('camera-1')).toBe('calibration-not-applicable');
+    expect(measurePose).not.toHaveBeenCalled();
+    expect(controller.boardPoseJson('camera-1')).toBe('');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a board the marker dictionary cannot fill before taking the camera', async () => {
+    const {controller, acquireCamera} = setup();
+    await controller.importProfile('camera-1', PROFILE);
+    await expect(
+      controller.measureBoardPose({
+        cameraId: 'camera-1',
+        board: {...BOARD, columns: 10, rows: 9},
+        scaleSource: 'nominal'
+      })
+    ).rejects.toThrow(/invalid-board/u);
     expect(acquireCamera).not.toHaveBeenCalled();
   });
 

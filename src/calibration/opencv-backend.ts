@@ -1,5 +1,12 @@
 import {distortionModelForCoefficientCount} from './profile.js';
 import {OPENCV_BACKEND_NAME} from './opencv-symbols.js';
+import {
+  cornerRegion,
+  describeOpenCvFailure,
+  heldOutRms,
+  regionVariance
+} from './measures.js';
+import {cornersSpanBoard} from './pose.js';
 
 export {OPENCV_BACKEND_NAME};
 import type {
@@ -28,7 +35,6 @@ interface CvMat {
   readonly data32F: Float32Array;
   readonly data32S: Int32Array;
   readonly data64F: Float64Array;
-  doubleAt(row: number, column: number): number;
   delete(): void;
 }
 
@@ -113,7 +119,6 @@ interface CvApi {
     refineParameters: unknown
   ) => CvCharucoDetector;
   Laplacian(source: CvMat, destination: CvMat, depth: number): void;
-  meanStdDev(source: CvMat, mean: CvMat, standardDeviation: CvMat): void;
   matFromArray(
     rows: number,
     columns: number,
@@ -231,6 +236,18 @@ export class OpenCvChessboardCalibration {
     board: CalibrationBoard
   ): Promise<CalibrationDetection> {
     const cv = await this.ready;
+    try {
+      return this.detectSample(cv, frame, board);
+    } catch (error) {
+      throw describeOpenCvFailure('looking for the board', error);
+    }
+  }
+
+  private detectSample(
+    cv: CvApi,
+    frame: CalibrationPixels,
+    board: CalibrationBoard
+  ): CalibrationDetection {
     // Pixels, not an element. cv.imread reaches for document and
     // HTMLImageElement, neither of which exists where this now runs; the frame
     // is read on the thread that owns the video and the bytes are sent here.
@@ -244,8 +261,6 @@ export class OpenCvChessboardCalibration {
     const markerCorners = new cv.MatVector();
     const markerIds = new cv.Mat();
     const laplacian = new cv.Mat();
-    const mean = new cv.Mat();
-    const standardDeviation = new cv.Mat();
     try {
       cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
       const detector = this.detectorFor(cv, board);
@@ -259,8 +274,13 @@ export class OpenCvChessboardCalibration {
       const points = readPointPairs(corners.data32F);
       const identifiers: number[] = Array.from(ids.data32S);
       cv.Laplacian(gray, laplacian, cv.CV_64F);
-      cv.meanStdDev(laplacian, mean, standardDeviation);
-      const sharpness = standardDeviation.doubleAt(0, 0) ** 2;
+      // Over the board, not the frame: a sharp background would otherwise
+      // pass a blurred board, and the board's corners are what the solve uses.
+      const sharpness = regionVariance(
+        laplacian.data64F,
+        laplacian.cols,
+        cornerRegion(points, frame.width, frame.height)
+      );
       const coverage = boardCoverage(points, frame.width, frame.height);
       const completeness = identifiers.length / (board.columns * board.rows);
       const quality = clamp01(
@@ -273,8 +293,6 @@ export class OpenCvChessboardCalibration {
         markersSeen
       };
     } finally {
-      standardDeviation.delete();
-      mean.delete();
       laplacian.delete();
       markerIds.delete();
       markerCorners.delete();
@@ -292,12 +310,29 @@ export class OpenCvChessboardCalibration {
     imageHeight: number
   ): Promise<CalibrationSolveResult> {
     const cv = await this.ready;
+    try {
+      return this.solveViews(cv, samples, board, imageWidth, imageHeight);
+    } catch (error) {
+      throw describeOpenCvFailure('solving the calibration', error);
+    }
+  }
+
+  private solveViews(
+    cv: CvApi,
+    samples: readonly CalibrationSample[],
+    board: CalibrationBoard,
+    imageWidth: number,
+    imageHeight: number
+  ): CalibrationSolveResult {
     const objectPoints = new cv.MatVector();
     const imagePoints = new cv.MatVector();
     const rotationVectors = new cv.MatVector();
     const translationVectors = new cv.MatVector();
     const cameraMatrix = cv.Mat.eye(3, 3, cv.CV_64F);
-    const distortionCoefficients = cv.Mat.zeros(8, 1, cv.CV_64F);
+    // Five: the plumb-bob model, which is what OpenCV fits with no model flag.
+    // It trims a longer matrix to five anyway, so a larger one only suggested a
+    // rational model that is never solved for.
+    const distortionCoefficients = cv.Mat.zeros(5, 1, cv.CV_64F);
     const standardDeviationsIntrinsics = new cv.Mat();
     const standardDeviationsExtrinsics = new cv.Mat();
     const perViewErrors = new cv.Mat();
@@ -373,6 +408,19 @@ export class OpenCvChessboardCalibration {
     solution: CalibrationSolveResult
   ): Promise<BoardPoseSolution | undefined> {
     const cv = await this.ready;
+    try {
+      return this.solvePose(cv, frame, board, solution);
+    } catch (error) {
+      throw describeOpenCvFailure('measuring the board pose', error);
+    }
+  }
+
+  private solvePose(
+    cv: CvApi,
+    frame: CalibrationPixels,
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): BoardPoseSolution | undefined {
     const source = cv.matFromImageData(frame);
     const gray = new cv.Mat();
     const corners = new cv.Mat();
@@ -384,6 +432,9 @@ export class OpenCvChessboardCalibration {
       if (ids.rows < MINIMUM_CORNERS) return undefined;
       const observed = readPointPairs(corners.data32F);
       const identifiers: number[] = Array.from(ids.data32S);
+      // One line of corners fixes no plane, and solvePnP either throws on it or
+      // answers with a pose that is not one. The board is not usefully in view.
+      if (!cornersSpanBoard(identifiers, board)) return undefined;
       const worldPoints = this.worldPointsFor(cv, board);
 
       const objectPoint = cv.matFromArray(
@@ -460,6 +511,19 @@ export class OpenCvChessboardCalibration {
   ): Promise<number> {
     if (samples.length === 0) return 0;
     const cv = await this.ready;
+    try {
+      return this.reprojectHeldOut(cv, samples, board, solution);
+    } catch (error) {
+      throw describeOpenCvFailure('checking the held-out views', error);
+    }
+  }
+
+  private reprojectHeldOut(
+    cv: CvApi,
+    samples: readonly CalibrationSample[],
+    board: CalibrationBoard,
+    solution: CalibrationSolveResult
+  ): number {
     const worldPoints = this.worldPointsFor(cv, board);
     const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, solution.intrinsicMatrix);
     const distortion = cv.matFromArray(
@@ -472,6 +536,7 @@ export class OpenCvChessboardCalibration {
     );
     let squared = 0;
     let counted = 0;
+    let views = 0;
     const scratch: CvMat[] = [cameraMatrix, distortion];
     try {
       for (const sample of samples) {
@@ -514,6 +579,7 @@ export class OpenCvChessboardCalibration {
           projected
         );
         const predicted = readPointPairs(projected.data32F);
+        views += 1;
         for (let index = 0; index < sample.corners.length; index += 1) {
           const observed = sample.corners[index];
           const expected = predicted[index];
@@ -525,7 +591,7 @@ export class OpenCvChessboardCalibration {
     } finally {
       for (const matrix of scratch) matrix.delete();
     }
-    return counted > 0 ? Math.sqrt(squared / counted) : 0;
+    return heldOutRms(squared, counted, views);
   }
 }
 

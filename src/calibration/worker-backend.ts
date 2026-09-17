@@ -23,12 +23,48 @@ import type {
   CalibrationSolveResult
 } from './types.js';
 
+/**
+ * How long one call may go unanswered before the worker is presumed gone.
+ *
+ * Generous, because the first call also evaluates and starts OpenCV, and a
+ * solve over forty views on a slow machine takes seconds. The limit is not
+ * there to hurry a slow worker; it is there because a worker that died -- out
+ * of memory in WebAssembly, or never loaded -- answers nothing at all, and
+ * every caller waiting on it would wait for ever. That includes a cancel, and
+ * the project stop that runs one.
+ */
+export const WORKER_CALL_TIMEOUT_MS = 120_000;
+
+/** The worker stopped answering, as opposed to answering with an error. */
+export class WorkerUnavailableError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'WorkerUnavailableError';
+  }
+}
+
+export interface WorkerCalibrationBackendOptions {
+  /** Starts the worker. Injected so tests can stand in a worker that never answers. */
+  createWorker?: () => Worker;
+  timeoutMs?: number;
+}
+
 export class WorkerCalibrationBackend implements CalibrationBackendPort {
   public readonly name = OPENCV_BACKEND_NAME;
 
   private worker: Worker | undefined;
   private remote: Remote<OpenCvChessboardCalibration> | undefined;
+  /** Rejects when the worker reports it can no longer run. Never resolves. */
+  private lost: Promise<never> | undefined;
+  private loseWorker: ((reason: WorkerUnavailableError) => void) | undefined;
   private canvas: HTMLCanvasElement | undefined;
+  private readonly createWorker: () => Worker;
+  private readonly timeoutMs: number;
+
+  public constructor(options: WorkerCalibrationBackendOptions = {}) {
+    this.createWorker = options.createWorker ?? (() => new OpenCvWorker());
+    this.timeoutMs = options.timeoutMs ?? WORKER_CALL_TIMEOUT_MS;
+  }
 
   public async captureSample(
     frame: CalibrationFrame,
@@ -38,9 +74,8 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     // The buffer is handed over rather than copied. Nothing here reads it
     // again, and a frame is megabytes: copying one per sample is a cost paid
     // on the thread the operator is watching.
-    return this.solver().captureSample(
-      transfer(pixels, [pixels.data.buffer]),
-      board
+    return this.call((solver) =>
+      solver.captureSample(transfer(pixels, [pixels.data.buffer]), board)
     );
   }
 
@@ -50,10 +85,8 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     solution: CalibrationSolveResult
   ): Promise<BoardPoseSolution | undefined> {
     const pixels = this.readFrame(frame);
-    return this.solver().measurePose(
-      transfer(pixels, [pixels.data.buffer]),
-      board,
-      solution
+    return this.call((solver) =>
+      solver.measurePose(transfer(pixels, [pixels.data.buffer]), board, solution)
     );
   }
 
@@ -63,7 +96,7 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     imageWidth: number,
     imageHeight: number
   ): Promise<CalibrationSolveResult> {
-    return this.solver().solve(samples, board, imageWidth, imageHeight);
+    return this.call((solver) => solver.solve(samples, board, imageWidth, imageHeight));
   }
 
   public async validate(
@@ -71,21 +104,75 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
     board: CalibrationBoard,
     solution: CalibrationSolveResult
   ): Promise<number> {
-    return this.solver().validate(samples, board, solution);
+    return this.call((solver) => solver.validate(samples, board, solution));
   }
 
-  /** Ends the worker. The next call starts a new one. */
+  /**
+   * Ends the worker. The next call starts a new one.
+   *
+   * Calls still waiting on it fail now: a terminated worker answers nothing,
+   * and they would otherwise wait out the deadline.
+   */
   public dispose(): void {
+    this.loseWorker?.(new WorkerUnavailableError('The OpenCV worker was stopped.'));
+    this.loseWorker = undefined;
     this.worker?.terminate();
     this.worker = undefined;
     this.remote = undefined;
+    this.lost = undefined;
     this.canvas = undefined;
+  }
+
+  /**
+   * Makes one call, and gives up on a worker that cannot answer it.
+   *
+   * Comlink settles a call only when the worker replies. A worker that failed
+   * to load or died replies to nothing, so the call is raced against the
+   * worker's own error events and a deadline. Losing either race ends that
+   * worker, so the next call starts a working one instead of queueing behind
+   * a dead one. An error the solver itself throws is an answer, and leaves the
+   * worker running.
+   */
+  private async call<T>(run: (solver: Remote<OpenCvChessboardCalibration>) => Promise<T>): Promise<T> {
+    const solver = this.solver();
+    const worker = this.worker;
+    const lost = this.lost as Promise<never>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new WorkerUnavailableError(
+            `The OpenCV worker did not answer within ${this.timeoutMs} ms.`
+          )
+        );
+      }, this.timeoutMs);
+    });
+    try {
+      return await Promise.race([run(solver), lost, deadline]);
+    } catch (error) {
+      if (error instanceof WorkerUnavailableError && this.worker === worker) this.dispose();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private solver(): Remote<OpenCvChessboardCalibration> {
     if (!this.remote) {
-      const worker = new OpenCvWorker();
+      const worker = this.createWorker();
       this.worker = worker;
+      this.lost = new Promise<never>((_, reject) => {
+        this.loseWorker = reject;
+        const fail = (event: Event) => {
+          const message = (event as Partial<ErrorEvent>).message;
+          const detail = typeof message === 'string' && message ? `: ${message}` : '';
+          reject(new WorkerUnavailableError(`The OpenCV worker stopped (${event.type})${detail}.`));
+        };
+        worker.addEventListener('error', fail, {once: true});
+        worker.addEventListener('messageerror', fail, {once: true});
+      });
+      // Observed by every call; nothing is lost when no call is waiting.
+      this.lost.catch(() => undefined);
       this.remote = wrap<OpenCvChessboardCalibration>(worker);
     }
     return this.remote;

@@ -38,12 +38,14 @@ import type {
   TiltDirection
 } from './contract.js';
 import {
+  cornersSpanBoard,
+  measuredTilt,
   MINIMUM_POSE_SPREAD,
   poseSpread,
   tiltDistance,
-  tiltOf,
   weakestTiltDirection
 } from './pose.js';
+import {DICT_4X4_50} from '../board/aruco.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -174,6 +176,8 @@ class CameraCalibration {
   private acquiring: Promise<void> | undefined;
   private sampling: Promise<void> | undefined;
   private solving: Promise<void> | undefined;
+  /** Whether `solving` is the shutter's background solve, not one that was asked for. */
+  private solvingAutomatically = false;
   private profile: CameraIntrinsicsV1 | undefined;
   private boardPose: string = '';
   private sessionSampleCount = 0;
@@ -193,7 +197,15 @@ class CameraCalibration {
   private noveltyNow = 0;
   /** The furthest along this session has been, in steps. Never falls. */
   private progressReached = 0;
-  /** Sample count the last automatic solve was started from. */
+  /**
+   * Views accepted this session, counting the ones since dropped.
+   *
+   * Not the size of the set. At the cap a view is dropped for every view
+   * added, so the size stops moving while what the set holds keeps changing --
+   * and a solve keyed on the size would never run again.
+   */
+  private collected = 0;
+  /** The value of `collected` the last automatic solve was started from. */
   private solvedFrom = 0;
 
   public constructor(
@@ -268,6 +280,7 @@ class CameraCalibration {
     };
     this.lease = lease;
     this.samples = [];
+    this.collected = 0;
     this.solvedFrom = 0;
     this.progressReached = 0;
     this.sessionSampleCount = 0;
@@ -280,7 +293,10 @@ class CameraCalibration {
 
   public addSample(): Promise<void> {
     if (this.sampling) return this.sampling;
-    if (!this.session || !this.lease || this.calibrationState !== 'ready') {
+    // Also while the shutter solves in the background, where the state stays
+    // `ready`. A view added then is in neither the fit nor the hold-out, and
+    // the profile that solve produces would still count it.
+    if (!this.session || !this.lease || this.calibrationState !== 'ready' || this.solving) {
       throw new Error(`Camera ${this.cameraId} calibration is not ready to sample.`);
     }
     return this.track(this.captureSample(this.operation));
@@ -469,8 +485,8 @@ class CameraCalibration {
   private startAutomaticSolve(operation: number): Promise<void> {
     // Nothing new to solve from. Re-running the solver on the same views would
     // produce the same answer at the same cost.
-    if (this.samples.length === this.solvedFrom) return Promise.resolve();
-    this.solvedFrom = this.samples.length;
+    if (this.collected === this.solvedFrom) return Promise.resolve();
+    this.solvedFrom = this.collected;
     const solving = this.automaticSolve(operation).catch(() => {
       // A solver that cannot answer for this set is not a session-ending
       // failure: more views may well fix it, and the operator is still
@@ -479,8 +495,12 @@ class CameraCalibration {
       if (this.calibrationState !== 'error') this.guide('keep-going');
     });
     this.solving = solving;
+    this.solvingAutomatically = true;
     const clear = () => {
-      if (this.solving === solving) this.solving = undefined;
+      if (this.solving === solving) {
+        this.solving = undefined;
+        this.solvingAutomatically = false;
+      }
     };
     void solving.then(clear, clear);
     return solving;
@@ -535,11 +555,20 @@ class CameraCalibration {
       this.guide(overfitted ? 'vary-more' : 'keep-going');
       return;
     }
-    await this.finishSolve(session, lease, solution);
+    await this.finishSolve(session, lease, solution, fitted.length);
   }
 
   public solve(): Promise<void> {
-    if (this.solving) return this.solving;
+    if (this.solving) {
+      // A solve that was asked for answers the one asking. The shutter's own
+      // solve does not: it ends quietly when the set is not good enough, and
+      // handing that back would report a refusal as a success. Wait for it,
+      // and solve as asked unless it already finished the session.
+      if (!this.solvingAutomatically) return this.solving;
+      return this.solving.then(() =>
+        this.calibrationState === 'solved' ? undefined : this.solve()
+      );
+    }
     if (!this.session || !this.lease || this.calibrationState !== 'ready') {
       throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
     }
@@ -615,7 +644,12 @@ class CameraCalibration {
         `Camera ${this.cameraId} has no calibration profile, so nothing can say where the board is.`
       );
     }
-    const board = normalizeBoard(options.board);
+    let board: CalibrationBoard;
+    try {
+      board = normalizeBoard(options.board);
+    } catch (error) {
+      this.refuse('invalid-board', error instanceof Error ? error.message : String(error));
+    }
     let lease: CameraLease;
     try {
       lease = await requireCameraSource(this.runtime).acquireCamera({
@@ -630,6 +664,16 @@ class CameraCalibration {
     }
     try {
       const frame = requireVideoFrame(lease);
+      // The intrinsics are in the pixels of the image they were solved at. Read
+      // against a frame of another size they still produce a pose -- a
+      // plausible one, wrong by the ratio of the two -- so the mismatch is
+      // refused here rather than left to show up downstream.
+      if (frame.width !== profile.imageWidth || frame.height !== profile.imageHeight) {
+        this.refuse(
+          'calibration-not-applicable',
+          `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${frame.width}x${frame.height}.`
+        );
+      }
       const backend = await this.resolveBackend();
       const pose = await backend.measurePose(
         {element: frame.element, width: frame.width, height: frame.height},
@@ -879,7 +923,9 @@ class CameraCalibration {
         session.board
       );
     } catch (error) {
-      this.fail('sample-failed', error);
+      // The solver could not read this frame. The session, its camera and the
+      // views already held are all still good, so it stays open.
+      this.rejectWith('sample-failed', error);
     }
     if (operation !== this.operation) return;
     const sample = detection.sample;
@@ -904,6 +950,16 @@ class CameraCalibration {
     // board running off the edge of the frame still contributes what it shows,
     // and those corners are near the image border -- which is where the
     // principal point and the distortion are decided.
+    // Corners on one line of the board -- a strip along the edge of the frame
+    // -- fix no plane. The solver has no homography to start from, and fails
+    // on the whole set or answers with nonsense.
+    if (!cornersSpanBoard(sample.ids, session.board)) {
+      if (automatic) return this.decline('show-the-board');
+      this.reject(
+        'sample-low-quality',
+        'The corners found lie on one line of the board. Show more of the board.'
+      );
+    }
     if (
       sample.corners.length !== sample.ids.length ||
       !Number.isFinite(sample.quality) ||
@@ -926,6 +982,7 @@ class CameraCalibration {
     }
     if (automatic && this.samples.length >= MAXIMUM_SAMPLES) this.dropTheDullest(session);
     this.samples.push(accepted);
+    this.collected += 1;
     this.sessionSampleCount = this.samples.length;
     this.sampleQuality = accepted.quality;
     this.calibrationState = 'ready';
@@ -985,11 +1042,17 @@ class CameraCalibration {
    */
   private noveltyOf(sample: CalibrationSample, session: CalibrationSession): number {
     if (this.samples.length === 0) return 1;
-    const tilt = tiltOf(sample, session.board);
+    const tilt = measuredTilt(sample, session.board);
+    // A view too little of the board shows to read a tilt from says nothing
+    // about how it was turned, and is not rewarded as if it did.
+    if (tilt.x === undefined && tilt.y === undefined) return 0;
     let nearest = Number.POSITIVE_INFINITY;
     for (const held of this.samples) {
-      nearest = Math.min(nearest, tiltDistance(tilt, tiltOf(held, session.board)));
+      const distance = tiltDistance(tilt, measuredTilt(held, session.board));
+      if (distance !== undefined) nearest = Math.min(nearest, distance);
     }
+    // Nothing held could be compared with it: as new as a first view.
+    if (nearest === Number.POSITIVE_INFINITY) return 1;
     return Math.max(0, Math.min(1, nearest / MINIMUM_POSE_SPREAD));
   }
 
@@ -1038,7 +1101,10 @@ class CameraCalibration {
       );
       holdoutError = await backend.validate(heldOut, session.board, solution);
     } catch (error) {
-      this.fail('solve-failed', error);
+      // A set the solver cannot answer for is not a lost session: more views
+      // may fix it. Ending it here would also keep the camera leased by a
+      // session nothing can use.
+      this.rejectWith('solve-failed', error);
     }
     if (operation !== this.operation) return;
     this.reprojectionError = solution.reprojectionErrorPx;
@@ -1054,7 +1120,20 @@ class CameraCalibration {
         `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`
       );
     }
-    await this.finishSolve(session, lease, solution);
+    // The same bar the shutter sets. The fit error alone is met by an
+    // overfitted answer -- exactly when the set was too small or too alike --
+    // and a solve asked for by hand is not a reason to accept one.
+    if (
+      heldOut.length > 0 &&
+      (!Number.isFinite(this.holdoutError) ||
+        this.holdoutError > session.maximumReprojectionErrorPx)
+    ) {
+      this.reject(
+        'reprojection-too-high',
+        `Hold-out reprojection RMS ${this.holdoutError} px over ${heldOut.length} views the fit did not see exceeds ${session.maximumReprojectionErrorPx} px, while the fit itself reached ${this.reprojectionError} px. The views are too alike: vary the distance and the angle.`
+      );
+    }
+    await this.finishSolve(session, lease, solution, fitted.length);
   }
 
   /**
@@ -1069,7 +1148,8 @@ class CameraCalibration {
   private async finishSolve(
     session: CalibrationSession,
     lease: CameraLease,
-    solution: CalibrationSolveResult
+    solution: CalibrationSolveResult,
+    fittedCount: number
   ): Promise<void> {
     // Solved means usable on this camera. A profile that Camera Source would
     // judge not to fit the camera it was just solved on is not a result to
@@ -1108,14 +1188,19 @@ class CameraCalibration {
         intrinsicMatrix: solution.intrinsicMatrix,
         distortionModel: solution.distortionModel,
         distortionCoefficients: solution.distortionCoefficients,
-        quality: {sampleCount, reprojectionErrorPx: solution.reprojectionErrorPx},
+        // The views the error is measured over, which are the ones fitted: a
+        // count that included the held-out views would describe a fit that
+        // never saw them.
+        quality: {sampleCount: fittedCount, reprojectionErrorPx: solution.reprojectionErrorPx},
         ...(session.conditions
           ? {capture: session.conditions.capture, device: session.conditions.device}
           : {}),
         calibratedAt: new Date(this.nowMilliseconds()).toISOString()
       });
     } catch (error) {
-      this.fail('invalid-calibration', error);
+      // An answer outside the contract -- a principal point off the image --
+      // is a set that has not constrained the camera yet, not a lost session.
+      this.rejectWith('invalid-calibration', error);
     }
     this.stopAutomatic();
     this.profile = profile;
@@ -1144,6 +1229,12 @@ class CameraCalibration {
   private reject(code: CalibrationErrorCode, message: string): never {
     if (this.calibrationState !== 'ready' && this.lease) this.calibrationState = 'ready';
     this.refuse(code, message);
+  }
+
+  /** `reject`, keeping the cause. */
+  private rejectWith(code: CalibrationErrorCode, cause: unknown): never {
+    if (this.calibrationState !== 'ready' && this.lease) this.calibrationState = 'ready';
+    this.refuseWith(code, cause);
   }
 
   /** Records why an operation was refused, without touching the state. */
@@ -1276,6 +1367,11 @@ export class CameraCalibrationController {
   public async cleanupAll(): Promise<void> {
     await Promise.allSettled([...this.cameras.values()].map((camera) => camera.cleanup()));
     this.cameras.clear();
+    // The solver outlives every session on purpose, and nothing but this ends
+    // it: a disposed runtime would otherwise keep a worker holding OpenCV.
+    const backend = this.backendPromise;
+    this.backendPromise = undefined;
+    if (backend) (await backend.catch(() => undefined))?.dispose?.();
   }
 
   public backend(): string {
@@ -1392,6 +1488,15 @@ function normalizeBoard(board: CalibrationBoard): CalibrationBoard {
   ) {
     throw new Error('marker size must be greater than zero and smaller than the square size.');
   }
+  // Every light square carries its own marker, and the dictionary has only so
+  // many. A board that needs more is accepted by nothing downstream: OpenCV
+  // refuses to build it, and not until the first frame is looked at.
+  const markers = boardMarkerCount(columns, rows);
+  if (markers > DICT_4X4_50.length) {
+    throw new Error(
+      `a ${columns}x${rows} board needs ${markers} markers, and DICT_4X4_50 has ${DICT_4X4_50.length}.`
+    );
+  }
   return {
     columns,
     rows,
@@ -1417,20 +1522,43 @@ function normalizeStartOptions(options: CalibrationStartOptions): CalibrationSta
   };
 }
 
+/** Markers on a board of `columns` by `rows` inner corners: one per light square. */
+function boardMarkerCount(columns: number, rows: number): number {
+  return Math.floor(((columns + 1) * (rows + 1)) / 2);
+}
+
+/**
+ * How far the corners two views share moved, as a share of the image diagonal.
+ *
+ * Matched by id, not by position in the array. Two views of a ChArUco board
+ * rarely show the same corners, and one corner more or fewer shifts every
+ * position after it -- so comparing by position compares different corners,
+ * and a board that did not move reads as one that did.
+ *
+ * Views with no corner in common cannot be the same view.
+ */
 function normalizedCornerDistance(
   left: CalibrationSample,
   right: CalibrationSample,
   width: number,
   height: number
 ): number {
+  const rightById = new Map<number, CalibrationSample['corners'][number]>();
+  right.ids.forEach((id, index) => {
+    const corner = right.corners[index];
+    if (corner) rightById.set(id, corner);
+  });
   let squared = 0;
-  for (let index = 0; index < left.corners.length; index += 1) {
+  let shared = 0;
+  left.ids.forEach((id, index) => {
     const a = left.corners[index];
-    const b = right.corners[index];
-    if (!a || !b) return Number.POSITIVE_INFINITY;
+    const b = rightById.get(id);
+    if (!a || !b) return;
     squared += (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-  }
-  return Math.sqrt(squared / left.corners.length) / Math.hypot(width, height);
+    shared += 1;
+  });
+  if (shared === 0) return Number.POSITIVE_INFINITY;
+  return Math.sqrt(squared / shared) / Math.hypot(width, height);
 }
 
 function identifier(value: string, label: string): string {

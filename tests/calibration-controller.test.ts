@@ -217,6 +217,140 @@ describe('CameraCalibrationController', () => {
     expect(duplicate.controller.state('camera-1')).toBe('ready');
   });
 
+  it('keeps the session open when the solver cannot read a frame', async () => {
+    // The camera, its lease and the views held are all still good. Ending the
+    // session would throw those away and keep the camera leased by a session
+    // that refuses every further step.
+    const {controller, captureSample, release} = setup();
+    await controller.start(startOptions);
+    await controller.addSample('camera-1');
+    captureSample.mockRejectedValueOnce(new Error('the solver crashed'));
+    await expect(controller.addSample('camera-1')).rejects.toThrow(/sample-failed/u);
+    expect(controller.errorCode('camera-1')).toBe('sample-failed');
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(release).not.toHaveBeenCalled();
+    await controller.addSample('camera-1');
+    expect(controller.sampleCount('camera-1')).toBe(2);
+    expect(controller.errorCode('camera-1')).toBe('');
+  });
+
+  it('keeps the views and the camera when a solve fails, so it can be tried again', async () => {
+    const {controller, solve, release} = setup();
+    await controller.start(startOptions);
+    await fillSamples(controller);
+    solve.mockRejectedValueOnce(new Error('the solver crashed'));
+    await expect(controller.solve('camera-1')).rejects.toThrow(/solve-failed/u);
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.sampleCount('camera-1')).toBe(8);
+    expect(release).not.toHaveBeenCalled();
+    await controller.solve('camera-1');
+    expect(controller.state('camera-1')).toBe('solved');
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a view whose corners lie on one line of the board', async () => {
+    // A strip of corners along the edge of the frame fixes no plane: the
+    // solver has no homography to start from and fails on the whole set.
+    const whole = sample(0);
+    const {controller, captureSample} = setup();
+    captureSample.mockResolvedValueOnce({
+      sample: {...whole, corners: whole.corners.slice(0, 9), ids: whole.ids.slice(0, 9)},
+      markersSeen: 10
+    });
+    await controller.start(startOptions);
+    await expect(controller.addSample('camera-1')).rejects.toThrow(
+      /sample-low-quality: The corners found lie on one line/u
+    );
+    expect(controller.sampleCount('camera-1')).toBe(0);
+    expect(controller.state('camera-1')).toBe('ready');
+  });
+
+  it('stops the solver when every camera is cleaned up', async () => {
+    // Nothing else ends it. A disposed runtime would otherwise keep a worker
+    // holding OpenCV.
+    const context = setup();
+    const dispose = vi.fn();
+    const backend = await context.create();
+    backend.dispose = dispose;
+    await context.controller.start(startOptions);
+    await context.controller.addSample('camera-1');
+    await context.controller.cleanupAll();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a solve by hand that does not hold up on the views it was not fitted to', async () => {
+    // The bar the automatic path already sets. The fit error alone is met by
+    // an overfitted answer, exactly when the set was too small or too alike.
+    const {controller, validate, release} = setup();
+    validate.mockResolvedValue(4);
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) await controller.addSample('camera-1');
+    await expect(controller.solve('camera-1')).rejects.toThrow(
+      /reprojection-too-high: Hold-out reprojection RMS 4 px over 2 views/u
+    );
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.profileJson('camera-1')).toBe('');
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('counts the views the fit used, not the ones held back, in the profile quality', async () => {
+    const {controller} = setup();
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) await controller.addSample('camera-1');
+    await controller.solve('camera-1');
+    const profile = JSON.parse(controller.profileJson('camera-1')) as {
+      quality: {sampleCount: number};
+    };
+    expect(profile.quality.sampleCount).toBe(10);
+    expect(controller.holdoutSampleCount('camera-1')).toBe(2);
+  });
+
+  it('recognises the same view when it shows a different set of corners', async () => {
+    // A ChArUco view need not show every corner, and the detector rarely finds
+    // exactly the same ones twice. Compared by position in the array, one
+    // corner fewer shifts every corner after it, and a board that did not move
+    // reads as a new view -- in either order.
+    const whole = sample(0);
+    const partial: CalibrationSample = {
+      ...whole,
+      corners: whole.corners.slice(1),
+      ids: whole.ids.slice(1)
+    };
+    for (const [first, second] of [
+      [whole, partial],
+      [partial, whole]
+    ] as const) {
+      const context = setup();
+      context.captureSample
+        .mockResolvedValueOnce({sample: first, markersSeen: 35})
+        .mockResolvedValueOnce({sample: second, markersSeen: 35});
+      await context.controller.start(startOptions);
+      await context.controller.addSample('camera-1');
+      await expect(context.controller.addSample('camera-1')).rejects.toThrow(
+        /sample-too-similar/u
+      );
+      expect(context.controller.sampleCount('camera-1')).toBe(1);
+    }
+  });
+
+  it('still takes a view that shares no corner with any held', async () => {
+    const whole = sample(0);
+    const context = setup();
+    context.captureSample
+      .mockResolvedValueOnce({
+        sample: {...whole, corners: whole.corners.slice(0, 27), ids: whole.ids.slice(0, 27)},
+        markersSeen: 35
+      })
+      .mockResolvedValueOnce({
+        sample: {...whole, corners: whole.corners.slice(27), ids: whole.ids.slice(27)},
+        markersSeen: 35
+      });
+    await context.controller.start(startOptions);
+    await context.controller.addSample('camera-1');
+    await context.controller.addSample('camera-1');
+    expect(context.controller.sampleCount('camera-1')).toBe(2);
+  });
+
   it('rejects changed capture conditions and excessive reprojection error', async () => {
     const resolution = setup();
     await resolution.controller.start(startOptions);
@@ -332,6 +466,14 @@ describe('CameraCalibrationController', () => {
       invalid.controller.start({...startOptions, board: {...startOptions.board, columns: 2}})
     ).rejects.toThrow(/invalid-board/u);
     expect(invalid.controller.errorCode('camera-1')).toBe('invalid-board');
+
+    // Every light square needs its own marker, and DICT_4X4_50 has fifty: a
+    // 10x9 board needs 55. Refused at the start, not at the first frame.
+    const oversized = setup();
+    await expect(
+      oversized.controller.start({...startOptions, board: {...startOptions.board, columns: 10, rows: 9}})
+    ).rejects.toThrow(/invalid-board: a 10x9 board needs 55 markers/u);
+    expect(oversized.acquireCamera).not.toHaveBeenCalled();
 
     const missing = setup();
     delete missing.runtime.ext_kubohiroyacamerasource;
@@ -492,10 +634,12 @@ describe('CameraCalibrationController', () => {
   });
 
   it('does not repair a failed session by asking to publish', async () => {
-    const {controller, captureSample} = setup();
-    captureSample.mockRejectedValue(new Error('the solver crashed'));
+    const {controller, lease} = setup();
     await controller.start(startOptions);
-    await expect(controller.addSample('camera-1')).rejects.toThrow(/sample-failed/u);
+    lease.getFrameSource = vi.fn(() => {
+      throw new Error('ended');
+    });
+    await expect(controller.addSample('camera-1')).rejects.toThrow(/camera-ended/u);
     expect(controller.state('camera-1')).toBe('error');
     await expect(controller.publishProfile('camera-1')).rejects.toThrow(/not-calibrated/u);
     expect(controller.state('camera-1')).toBe('error');

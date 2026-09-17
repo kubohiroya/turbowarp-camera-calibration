@@ -314,6 +314,76 @@ describe('the automatic shutter', () => {
     expect(controller.guidance(CAMERA)).not.toBe('limit-reached');
   });
 
+  it('solves again at the sample limit, where the set changes but its size does not', async () => {
+    // At the cap every view taken displaces one held, so the count stays at
+    // forty while the views change. Keyed on the count, the shutter would
+    // never solve again, and an operator supplying exactly the views it asked
+    // for would be told to vary more for ever.
+    const {controller, clock, solve} = await started({holdoutError: 9});
+    await clock.run(120);
+    expect(controller.sampleCount(CAMERA)).toBe(40);
+    const solvesAtLimit = solve.mock.calls.length;
+    await clock.run(10);
+    expect(controller.sampleCount(CAMERA)).toBe(40);
+    expect(solve.mock.calls.length).toBeGreaterThan(solvesAtLimit);
+  });
+
+  it('takes no view by hand while it solves in the background', async () => {
+    // The state stays ready during the background solve. A view added then is
+    // in neither the fit nor the hold-out, and the profile would count it.
+    const {controller, clock, solve} = await started();
+    let open: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const answer = solve.getMockImplementation();
+    solve.mockImplementation(async (...args) => {
+      await gate;
+      return answer!(...args);
+    });
+    for (let look = 0; look < 20 && solve.mock.calls.length === 0; look += 1) await clock.run(1);
+    expect(solve).toHaveBeenCalled();
+    expect(controller.state(CAMERA)).toBe('ready');
+    expect(() => controller.addSample(CAMERA)).toThrow(/not ready to sample/u);
+    open?.();
+  });
+
+  it('answers a solve asked for during a background one with its own result', async () => {
+    // The background solve ends quietly when the answer does not hold up on
+    // the held-out views. Handing that back to someone who asked to solve
+    // would report a refusal as a success.
+    const {controller, clock, solve} = await started({holdoutError: 9});
+    let open: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const answer = solve.getMockImplementation();
+    solve.mockImplementation(async (...args) => {
+      await gate;
+      return answer!(...args);
+    });
+    for (let look = 0; look < 20 && solve.mock.calls.length === 0; look += 1) await clock.run(1);
+    expect(solve).toHaveBeenCalledOnce();
+    const asked = controller.solve(CAMERA);
+    open?.();
+    await expect(asked).rejects.toThrow(/reprojection-too-high: Hold-out/u);
+    expect(solve).toHaveBeenCalledTimes(2);
+    expect(controller.state(CAMERA)).toBe('ready');
+  });
+
+  it('asks for more of the board when a view shows only one line of corners', async () => {
+    const {controller, clock} = await started({
+      detect: (index) => {
+        const whole = sample(index);
+        return {...whole, corners: whole.corners.slice(0, 9), ids: whole.ids.slice(0, 9)};
+      }
+    });
+    await clock.run(2);
+    expect(controller.sampleCount(CAMERA)).toBe(0);
+    expect(controller.guidance(CAMERA)).toBe('show-the-board');
+    expect(controller.errorCode(CAMERA)).toBe('');
+  });
+
   it('holds the answer against views it was not fitted to', async () => {
     const {controller, clock} = await started();
     await clock.run(14);

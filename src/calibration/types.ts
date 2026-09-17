@@ -204,6 +204,8 @@ export interface CalibrationBackendPort {
     board: CalibrationBoard,
     solution: CalibrationSolveResult
   ): Promise<BoardPoseSolution | undefined>;
+  /** Frees whatever the solver holds. The next call may start it again. */
+  dispose?(): void;
 }
 
 /**

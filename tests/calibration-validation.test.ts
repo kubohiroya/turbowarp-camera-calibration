@@ -1,5 +1,12 @@
 import {describe, expect, it} from 'vitest';
-import {MINIMUM_POSE_SPREAD, poseSpread, tiltOf} from '../src/calibration/pose.js';
+import {
+  measuredTilt,
+  MINIMUM_POSE_SPREAD,
+  poseSpread,
+  tiltDistance,
+  tiltOf,
+  weakestTiltDirection
+} from '../src/calibration/pose.js';
 import type {CalibrationBoard, CalibrationSample} from '../src/calibration/types.js';
 
 const BOARD: CalibrationBoard = {columns: 9, rows: 6, squareSizeMeters: 0.025, markerSizeMeters: 0.018};
@@ -97,5 +104,55 @@ describe('how varied a set of samples is', () => {
   it('reads zero before there is anything to compare', () => {
     expect(poseSpread([], BOARD)).toBe(0);
     expect(poseSpread([view(0.3, 0)], BOARD)).toBe(0);
+  });
+});
+
+/** Only the rows of a view from `first` to `last`, as a board run off the frame leaves. */
+function rows(sample: CalibrationSample, first: number, last: number): CalibrationSample {
+  const kept = sample.ids
+    .map((id, index) => ({id, corner: sample.corners[index]!}))
+    .filter(({id}) => Math.floor(id / 9) >= first && Math.floor(id / 9) <= last);
+  return {...sample, ids: kept.map(({id}) => id), corners: kept.map(({corner}) => corner)};
+}
+
+describe('a view that shows too little of the board to say how it was turned', () => {
+  it('has no reading on the axis it shows only one half of', () => {
+    // Rows 0 to 2 of six are all in the upper half, so nothing compares the
+    // upper half with the lower. That is not a board seen square on.
+    const top = measuredTilt(rows(view(0.3, 0.3), 0, 2), BOARD);
+    expect(top.x).toBeUndefined();
+    expect(top.y).toBeDefined();
+  });
+
+  it('neither adds to the spread nor dilutes it', () => {
+    const varied = [view(0, 0.35), view(0, -0.35), view(0.35, 0), view(-0.35, 0)];
+    const edges = [0, 1, 2, 3].map((index) => rows(view(0.3, 0.05 * index), 0, 2));
+    const set = [...varied, ...edges];
+    // Each axis over the views that have a reading on it.
+    const spreadOf = (values: number[]) => {
+      const average = values.reduce((total, value) => total + value, 0) / values.length;
+      return values.reduce((total, value) => total + (value - average) ** 2, 0) / values.length;
+    };
+    const expected = Math.sqrt(
+      spreadOf(varied.map((sample) => measuredTilt(sample, BOARD).x!)) +
+        spreadOf(set.map((sample) => measuredTilt(sample, BOARD).y!))
+    );
+    expect(poseSpread(set, BOARD)).toBeCloseTo(expected, 12);
+    // Read as square on, the four edge views would have pulled it down.
+    const naive = Math.sqrt(
+      spreadOf(set.map((sample) => tiltOf(sample, BOARD).x)) +
+        spreadOf(set.map((sample) => tiltOf(sample, BOARD).y))
+    );
+    expect(poseSpread(set, BOARD)).toBeGreaterThan(naive);
+  });
+
+  it('is not compared on an axis it has no reading on', () => {
+    expect(tiltDistance({x: undefined, y: 0.1}, {x: 0.4, y: 0.1})).toBe(0);
+    expect(tiltDistance({x: undefined, y: 0.1}, {x: 0.4, y: undefined})).toBeUndefined();
+  });
+
+  it('does not count towards a direction it cannot show', () => {
+    const edges = [0, 1, 2].map(() => rows(view(0.3, 0), 0, 2));
+    expect(weakestTiltDirection(edges, BOARD)).toBe('top-near');
   });
 });
