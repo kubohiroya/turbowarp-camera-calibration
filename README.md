@@ -102,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.12.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.13.0
 ```
 
 Load the standalone bundle from:
@@ -114,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.12.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.13.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -496,6 +496,7 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 | Camera calibration has not run | The state reporter returns `idle` and the profile reporter returns an empty string |
 | Board not found, blurred, or too similar to a kept view | The sample is refused with its own error code and the session stays ready |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
+| Resize mode, zoom, focus, or the camera changes before the solve | `capture-condition-mismatch`; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
 | Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added |
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
 | Solve succeeds | The camera lease is released immediately |

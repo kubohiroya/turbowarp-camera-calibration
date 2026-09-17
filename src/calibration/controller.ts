@@ -2,6 +2,7 @@ import {
   CALIBRATION_LEASE_OWNER,
   CameraSourceError,
   captureConditionsOf,
+  conditionsDrift,
   requireCameraSource,
   requireProfileRegistry,
   toCameraSourceProfile,
@@ -473,8 +474,9 @@ class CameraCalibration {
     const solving = this.automaticSolve(operation).catch(() => {
       // A solver that cannot answer for this set is not a session-ending
       // failure: more views may well fix it, and the operator is still
-      // collecting them.
-      this.guide('keep-going');
+      // collecting them. A session that did end -- its camera settings changed
+      // under it -- is not told to keep going.
+      if (this.calibrationState !== 'error') this.guide('keep-going');
     });
     this.solving = solving;
     const clear = () => {
@@ -1069,6 +1071,28 @@ class CameraCalibration {
     lease: CameraLease,
     solution: CalibrationSolveResult
   ): Promise<void> {
+    // Solved means usable on this camera. A profile that Camera Source would
+    // judge not to fit the camera it was just solved on is not a result to
+    // hand over, so the session ends in an error instead: the views were taken
+    // under conditions that no longer hold, and only a new session can fix it.
+    // A camera that never said how it was configured has nothing to drift
+    // from, and still calibrates.
+    if (session.conditions) {
+      const drift = conditionsDrift(
+        session.conditions,
+        captureConditionsOf(this.runtime, this.cameraId)
+      );
+      if (drift !== undefined) {
+        this.stopAutomatic();
+        await this.releaseSession();
+        this.fail(
+          'capture-condition-mismatch',
+          new Error(
+            `The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.`
+          )
+        );
+      }
+    }
     const sampleCount = this.samples.length;
     let profile: CameraIntrinsicsV1;
     try {

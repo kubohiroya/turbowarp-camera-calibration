@@ -101,7 +101,7 @@ bundleは約11 MBあります。
 検証済みのversionをexact pinします。
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.12.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.13.0
 ```
 
 standalone bundle:
@@ -113,7 +113,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 version固定CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.12.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.13.0/dist/camera-calibration.js
 ```
 
 ## クイックスタート
@@ -211,6 +211,7 @@ block referenceは
 | 校正を実行していない | 状態reporterは`idle`、プロファイルreporterは空文字列を返します |
 | 板が見つからない、ぶれている、既存サンプルと似すぎている | 固有のエラーコードで却下し、セッションはready のままです |
 | セッション中に解像度・device・左右反転が変わった | `resolution-mismatch` または `capture-condition-mismatch` |
+| 解くまでの間にリサイズ・ズーム・フォーカス・カメラが変わった | `capture-condition-mismatch`。camera-source がこのカメラに合わないと判定するプロファイルになるため、`solved` ではなく `error` で終わる |
 | 再投影誤差が上限を超えた | `reprojection-too-high`。プロファイルは保存せず、サンプルを追加できます |
 | 別のカメラ、または別の撮影サイズのプロファイル | 状態を変更する前に`calibration-not-applicable`で拒否します |
 | solve成功 | ただちにカメラのleaseを解放します |

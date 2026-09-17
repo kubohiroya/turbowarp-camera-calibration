@@ -497,6 +497,35 @@
   		device
   	};
   }
+  /**
+  * What changed in the camera's optics since a session began, or undefined when nothing did.
+  *
+  * The members are the ones Camera Source decides a profile's fit on -- resize mode, zoom, focus
+  * mode and focus distance, compared with its tolerances, and the device label. A difference in
+  * any of them would make the profile being solved `incompatible` with this camera the moment it
+  * was registered; conditions that could be read at the start and cannot be read now would make it
+  * `undetermined`. Either way the views were not all taken under the conditions the profile is
+  * about to claim, so the session is not worth ending as solved.
+  *
+  * Frame rate, facing mode and the device id are left out for the reason Camera Source leaves them
+  * out: none of them changes how the lens projects.
+  */
+  function conditionsDrift(recorded, current) {
+  	if (!current) return "the camera no longer reports how it is configured";
+  	const changed = [];
+  	const text = (name, left, right) => {
+  		if (left !== right) changed.push(`${name} ${left ?? "not reported"} -> ${right ?? "not reported"}`);
+  	};
+  	const number = (name, left, right) => {
+  		if (!(left === void 0 || right === void 0 ? left === right : Math.abs(left - right) <= 1e-6)) changed.push(`${name} ${left ?? "not reported"} -> ${right ?? "not reported"}`);
+  	};
+  	text("resize mode", recorded.capture.resizeMode, current.capture.resizeMode);
+  	number("zoom", recorded.capture.zoom, current.capture.zoom);
+  	text("focus mode", recorded.capture.focusMode, current.capture.focusMode);
+  	number("focus distance", recorded.capture.focusDistance, current.capture.focusDistance);
+  	if (recorded.device.label !== void 0 && current.device.label !== void 0) text("device", recorded.device.label, current.device.label);
+  	return changed.length === 0 ? void 0 : changed.join(", ");
+  }
   function requireProfileRegistry(runtime) {
   	if (!readCameraSourceRuntime(runtime)) throw new CameraSourceError("dependency-missing", "TurboWarp Camera Source is not loaded, so no calibration profile registry exists.");
   	const capability = readCameraSourceCapability(runtime);
@@ -1262,7 +1291,7 @@
   		if (this.samples.length === this.solvedFrom) return Promise.resolve();
   		this.solvedFrom = this.samples.length;
   		const solving = this.automaticSolve(operation).catch(() => {
-  			this.guide("keep-going");
+  			if (this.calibrationState !== "error") this.guide("keep-going");
   		});
   		this.solving = solving;
   		const clear = () => {
@@ -1670,6 +1699,14 @@
   	* it.
   	*/
   	async finishSolve(session, lease, solution) {
+  		if (session.conditions) {
+  			const drift = conditionsDrift(session.conditions, captureConditionsOf(this.runtime, this.cameraId));
+  			if (drift !== void 0) {
+  				this.stopAutomatic();
+  				await this.releaseSession();
+  				this.fail("capture-condition-mismatch", /* @__PURE__ */ new Error(`The camera settings changed during the calibration (${drift}). Restart the calibration for camera ${this.cameraId}.`));
+  			}
+  		}
   		const sampleCount = this.samples.length;
   		let profile;
   		try {
