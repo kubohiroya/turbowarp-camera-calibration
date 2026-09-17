@@ -70,7 +70,8 @@
     "check": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run docs:check && pnpm run check:dist && pnpm run repo:check && pnpm run pack:check",
     "check:dist": "pnpm run build && node scripts/check-dist.ts",
     "prepack": "pnpm run build",
-    "opencv:check": "node scripts/check-opencv.ts"
+    "opencv:check": "node scripts/check-opencv.ts",
+    "board:check": "node scripts/check-board.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

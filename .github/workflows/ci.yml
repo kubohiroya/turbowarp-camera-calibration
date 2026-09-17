@@ -28,3 +28,8 @@ jobs:
       # here so a dependency bump cannot pass review without it.
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run opencv:check
+      # The drawing and the detector are one repository now, which removes the
+      # drift between them but not the question: a board can be drawn wrongly
+      # without anyone noticing, because the mistake looks like a camera that
+      # cannot see.
+      - run: pnpm run board:check
