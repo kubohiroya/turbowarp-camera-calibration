@@ -372,7 +372,7 @@
   	]
   };
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@file+..+packs+kubohiroya-turbowarp-camera-source-0.11.0.tgz/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
   /**
   * Where the extension instance puts itself on the VM runtime.
   *
@@ -602,7 +602,7 @@
   	}
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@file+..+packs+kubohiroya-turbowarp-camera-source-0.11.0.tgz/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile.js
   var CAMERA_INTRINSIC_PROFILE_SCHEMA = "twcs/camera-intrinsics";
   /** The application-specific format this contract replaces. Read for migration, never written. */
   var LEGACY_CALIBRATION_SCHEMA = "twrmc/camera-calibration";
@@ -1012,7 +1012,7 @@
   	});
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@file+..+packs+kubohiroya-turbowarp-camera-source-0.11.0.tgz/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/yaml.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/yaml.js
   /**
   * The part of YAML that camera calibration files are written in.
   *
@@ -1378,7 +1378,7 @@
   	return result;
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@file+..+packs+kubohiroya-turbowarp-camera-source-0.11.0.tgz/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/camera-info.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/camera-info.js
   /**
   * The file a calibration is exchanged in: a ROS `camera_info` YAML document.
   *
@@ -1631,7 +1631,7 @@
   	return values.every((value) => value === 0);
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@file+..+packs+kubohiroya-turbowarp-camera-source-0.11.0.tgz/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile-text.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@0.11.0/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile-text.js
   /**
   * Profile text as an operator hands it over: a ROS `camera_info` YAML file, or profile JSON.
   *
