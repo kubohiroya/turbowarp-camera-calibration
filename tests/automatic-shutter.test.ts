@@ -472,6 +472,24 @@ describe('the automatic shutter', () => {
     expect(controller.holdoutSampleCount(CAMERA)).toBe(0);
   });
 
+  it('stops at the look where the settings changed, before collecting the rest', async () => {
+    let focusMode = 'manual';
+    const {controller, clock, solve, release} = await started({
+      conditions: () => ({width: 800, height: 600, deviceId: 'device-1', label: 'Camera', focusMode})
+    });
+    await clock.run(3);
+    focusMode = 'continuous';
+    await clock.run(1);
+    expect(controller.state(CAMERA)).toBe('error');
+    expect(controller.errorCode(CAMERA)).toBe('capture-condition-mismatch');
+    expect(controller.automatic(CAMERA)).toBe(false);
+    expect(controller.guidance(CAMERA)).toBe('');
+    expect(controller.sampleCount(CAMERA)).toBe(3);
+    expect(solve).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(clock.waiting()).toBe(0);
+  });
+
   it('holds the answer against views it was not fitted to', async () => {
     const {controller, clock} = await started();
     await clock.run(14);

@@ -8,6 +8,10 @@ import {
   type CameraSourceCapabilityV1,
   type DistortionModel as CameraSourceDistortionModel
 } from '@kubohiroya/turbowarp-camera-source/runtime';
+import {
+  evaluateProfileCompatibility,
+  type CameraConditions
+} from '@kubohiroya/turbowarp-camera-source/profile';
 import {DISTORTION_COEFFICIENT_COUNTS, type DistortionModel} from './types.js';
 import type {CalibrationCapture, CalibrationDevice, CameraIntrinsicsV1} from './profile.js';
 
@@ -71,16 +75,10 @@ export function captureConditionsOf(
   runtime: TurboWarpRuntime,
   cameraId: string
 ): {capture: CalibrationCapture; device: CalibrationDevice} | undefined {
-  const capability = readCameraSourceCapability(runtime) as
-    | {conditionsFor?: (cameraId: string) => Record<string, unknown>}
+  const conditions = cameraConditionsOf(runtime, cameraId) as
+    | Record<string, unknown>
     | undefined;
-  if (typeof capability?.conditionsFor !== 'function') return undefined;
-  let conditions: Record<string, unknown>;
-  try {
-    conditions = capability.conditionsFor(cameraId);
-  } catch {
-    return undefined;
-  }
+  if (!conditions) return undefined;
   const capture: CalibrationCapture = {};
   for (const key of ['resizeMode', 'focusMode', 'facingMode'] as const) {
     const value = conditions[key];
@@ -98,6 +96,83 @@ export function captureConditionsOf(
     device.deviceId = conditions.deviceId;
   }
   return {capture, device};
+}
+
+/**
+ * The conditions record exactly as Camera Source reports it, or undefined when
+ * there is no capability to ask or it has no answer. Never throws.
+ */
+export function cameraConditionsOf(
+  runtime: TurboWarpRuntime,
+  cameraId: string
+): CameraConditions | undefined {
+  const capability = readCameraSourceCapability(runtime) as
+    | {conditionsFor?: (cameraId: string) => CameraConditions}
+    | undefined;
+  if (typeof capability?.conditionsFor !== 'function') return undefined;
+  let conditions: unknown;
+  try {
+    conditions = capability.conditionsFor(cameraId);
+  } catch {
+    return undefined;
+  }
+  // The members Camera Source's own verdict reads without checking. A record
+  // missing them is not one it produced, and judging with it would throw.
+  if (typeof conditions !== 'object' || conditions === null) return undefined;
+  const {width, height, deviceId} = conditions as Record<string, unknown>;
+  if (typeof width !== 'number' || typeof height !== 'number' || typeof deviceId !== 'string') {
+    return undefined;
+  }
+  return conditions as CameraConditions;
+}
+
+/**
+ * Why a profile does not fit the camera as it is now, in Camera Source's own
+ * words, or an empty list when nothing stands in the way.
+ *
+ * The verdict is Camera Source's, not a copy of its rules: this extension
+ * produces the profile, and whether a profile fits a camera is the question
+ * Camera Source answers for every consumer. A copy agrees until either side
+ * changes, and the way that disagreement shows is a pose read through optics
+ * one of them has stopped accepting.
+ *
+ * One of its findings is set aside. A profile that recorded no capture
+ * conditions cannot be judged at all, and refusing it would refuse every
+ * profile made before they were recorded; it is measured with, as it always
+ * was. Every other finding that decides the verdict and is not a match stands
+ * in the way -- including one that cannot be settled, because an optic that
+ * may have changed is not one to measure through.
+ */
+export function compatibilityObjections(
+  profile: CameraIntrinsicsV1,
+  conditions: CameraConditions
+): string[] {
+  // Distortion plays no part in the verdict, and a model Camera Source cannot
+  // name would otherwise stop the profile from being judged at all.
+  const document = toCameraSourceProfile({
+    ...profile,
+    distortionModel: 'none',
+    distortionCoefficients: []
+  });
+  return evaluateProfileCompatibility(document, conditions)
+    .findings.filter(
+      (finding) =>
+        finding.decisive && finding.state !== 'matched' && finding.code !== 'capture-conditions'
+    )
+    .map((finding) => finding.detail);
+}
+
+/**
+ * What an operator can do about a drift, when there is something.
+ *
+ * Camera Source reads a camera's settings and never changes them, so a focus
+ * that moved under continuous autofocus cannot be fixed from the project. It
+ * can be fixed in the camera's own settings, and nothing else says so.
+ */
+export function driftAdvice(current: {capture: CalibrationCapture} | undefined): string {
+  return current?.capture.focusMode === 'continuous'
+    ? ' The camera is focusing continuously, which moves the focus -- and the focal length -- while the board moves. Lock the focus in the camera\'s own settings before calibrating.'
+    : '';
 }
 
 /**

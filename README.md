@@ -74,6 +74,7 @@ profile that carries a pairing credential is rejected rather than stored.
 | Tilt the board roughly 20°–45° in different directions across samples | Views that are all fronto-parallel cannot separate focal length from distance. Sliding the board sideways does not help, and a set that was never tilted is refused as `sample-poses-degenerate` |
 | Vary the distance, and fill different parts of the frame, including the corners | Distortion is strongest away from the image center. The markers name the corners, so a board that runs off the frame still contributes the corners it shows |
 | Keep the board in focus and hold it still for a moment | A blurred view is refused as `sample-low-quality`, or the automatic path asks to `hold-steadier` |
+| Lock the focus in the camera's own settings, rather than leaving autofocus on | Continuous autofocus moves the focal length as the board moves. Camera Source reads the camera's settings and never changes them, so this cannot be done from a project; a focus that moves ends the session at that view with `capture-condition-mismatch` |
 | Do not change resolution, camera device, mirroring, resize mode, focus, or zoom during a session | The session is fixed to the conditions it started with; a change ends it with `capture-condition-mismatch` rather than a profile that does not fit the camera |
 | Prefer a printed board or a 1:1 display; avoid projectors | Keystone correction, oblique projection, and the projector's own lens distort the board in ways the reprojection error does not show |
 
@@ -628,13 +629,13 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 | Sample or solve by hand while automatic capture is solving | A sample is refused until that solve ends. A solve waits for it and, unless it finished the session, solves as asked and reports its own result |
 | Solve from a set that was never tilted | `sample-poses-degenerate`; the session stays open for more samples |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
-| Resize mode, zoom, focus, or the camera changes before the solve | `capture-condition-mismatch`; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
+| Resize mode, zoom, focus, or the camera changes during the session | `capture-condition-mismatch` at the next view, and again before a solve lands; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
 | Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added. A solve by hand checks the hold-out error as well as the fit error, as automatic capture does, once at least two views were held back |
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
-| Board pose measured on a frame of another size than the profile, or with resize mode, zoom, focus, or the camera changed from the settings the profile recorded | `calibration-not-applicable`; nothing is measured and the camera is released. When Camera Source does not report settings at all, the pose is measured as before |
+| Board pose measured on a frame of another size than the profile, or on a camera Camera Source does not judge the profile to fit | `calibration-not-applicable` with Camera Source's reasons, including a setting it cannot compare and a profile of already undistorted images; nothing is measured and the camera is released. A profile that recorded no settings, or a Camera Source that reports none, is measured with as before |
 | Board pose requested without a calibration, or with the board out of view | `not-calibrated` or `board-pose-unavailable` |
 | Solve succeeds | The camera lease is released immediately |
-| Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released |
+| Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released. A solved or imported profile is kept across a project stop or reload, because it describes the camera rather than the project; runtime disposal and the cleanup block forget it |
 | Invalid input | Rejected before any session state changes, including a restart with a mistyped board |
 | A board needing more than the 50 markers of `DICT_4X4_50` (for example 10 by 9, which needs 55) | `invalid-board`, at the start rather than at the first frame |
 

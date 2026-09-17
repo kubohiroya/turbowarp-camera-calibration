@@ -65,6 +65,9 @@ function samplePose(): BoardPoseSolution {
   };
 }
 
+/** What Camera Source reports for the 1280x720 camera these tests lease. */
+const CONDITIONS = {width: 1280, height: 720, deviceId: 'device-1', previewFlip: 'none'};
+
 const PROFILE = JSON.stringify({
   schema: 'camerasource/camera-intrinsics',
   version: 1,
@@ -114,6 +117,7 @@ describe('measuring where the board is', () => {
     // size check cannot see it, and the pose comes out wrong in distance.
     let zoom = 1;
     const {controller, measurePose, release} = setup(samplePose(), () => ({
+      ...CONDITIONS,
       zoom,
       focusMode: 'manual',
       label: 'USB Camera'
@@ -130,7 +134,7 @@ describe('measuring where the board is', () => {
     zoom = 2;
     await expect(
       controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
-    ).rejects.toThrow(/calibration-not-applicable: .*zoom 1 -> 2/u);
+    ).rejects.toThrow(/calibration-not-applicable: .*Zoom was 1 at calibration and is 2 now/u);
     expect(measurePose).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledTimes(2);
   });
@@ -150,8 +154,62 @@ describe('measuring where the board is', () => {
     expect(controller.errorCode('camera-1')).toBe('');
   });
 
-  it('still measures with a profile that never recorded its settings', async () => {
+  it('refuses what Camera Source cannot settle, in its words', async () => {
+    // The verdict is Camera Source's. A zoom recorded at calibration that the
+    // camera no longer reports may have changed, and the pose would not show it.
+    const unreported = setup(samplePose(), () => ({...CONDITIONS, label: 'USB Camera'}));
+    await unreported.controller.importProfile(
+      'camera-1',
+      JSON.stringify({...(JSON.parse(PROFILE) as object), capture: {zoom: 1}})
+    );
+    await expect(
+      unreported.controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
+    ).rejects.toThrow(/Zoom is 1 in the profile and not reported now/u);
+    expect(unreported.measurePose).not.toHaveBeenCalled();
+
+    // Another camera, by the name it gives.
+    const relabelled = setup(samplePose(), () => ({...CONDITIONS, label: 'Other Camera'}));
+    await relabelled.controller.importProfile(
+      'camera-1',
+      JSON.stringify({
+        ...(JSON.parse(PROFILE) as object),
+        capture: {},
+        device: {label: 'USB Camera'}
+      })
+    );
+    await expect(
+      relabelled.controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
+    ).rejects.toThrow(/solved on USB Camera and the camera now reports Other Camera/u);
+
+    // A profile of already undistorted images, where the frames are raw.
+    const undistorted = setup(samplePose(), () => CONDITIONS);
+    await undistorted.controller.importProfile(
+      'camera-1',
+      JSON.stringify({
+        ...(JSON.parse(PROFILE) as object),
+        imageState: 'undistorted',
+        distortionModel: 'none',
+        distortionCoefficients: [],
+        capture: {}
+      })
+    );
+    await expect(
+      undistorted.controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'})
+    ).rejects.toThrow(/already undistorted images/u);
+  });
+
+  it('measures as before when the settings record is not one Camera Source produced', async () => {
     const {controller, measurePose} = setup(samplePose(), () => ({zoom: 2}));
+    await controller.importProfile(
+      'camera-1',
+      JSON.stringify({...(JSON.parse(PROFILE) as object), capture: {zoom: 1}})
+    );
+    await controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'});
+    expect(measurePose).toHaveBeenCalledOnce();
+  });
+
+  it('still measures with a profile that never recorded its settings', async () => {
+    const {controller, measurePose} = setup(samplePose(), () => ({...CONDITIONS, zoom: 2}));
     await controller.importProfile('camera-1', PROFILE);
     await controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'});
     expect(measurePose).toHaveBeenCalledOnce();
