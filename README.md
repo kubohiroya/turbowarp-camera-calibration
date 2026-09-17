@@ -102,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.9.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.10.0
 ```
 
 Load the standalone bundle from:
@@ -114,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.9.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.10.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -266,6 +266,16 @@ Returns which way the board still has to be turned: top-near, top-far, left-near
 |---|---|
 | Type | Reporter |
 | Opcode | `cameraCalibrationTiltDirection` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera calibration progress [CAMERA_ID]`
+
+Returns how far the session has come, from 0 to 16. Four gates of four steps: enough views to solve from, enough tilt among them, enough views to hold some back, and the answer holding up on the views it was not fitted to. Counted in order and stopped at the first unfinished gate, so the number says which gate is being worked on as well as how far into it. Never falls. Sixteen because that is enough to sound like progress and few enough to hear as distinct.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationProgress` |
 | `CAMERA_ID` | String, default: `default` |
 
 ### `solve calibration for camera [CAMERA_ID]`
