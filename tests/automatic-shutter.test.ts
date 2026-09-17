@@ -345,7 +345,7 @@ describe('the automatic shutter', () => {
     for (let look = 0; look < 20 && solve.mock.calls.length === 0; look += 1) await clock.run(1);
     expect(solve).toHaveBeenCalled();
     expect(controller.state(CAMERA)).toBe('ready');
-    expect(() => controller.addSample(CAMERA)).toThrow(/not ready to sample/u);
+    await expect(controller.addSample(CAMERA)).rejects.toThrow(/not ready to sample/u);
     open?.();
   });
 
@@ -512,6 +512,73 @@ describe('the automatic shutter', () => {
     expect(controller.state(CAMERA)).toBe('error');
     expect(controller.errorCode(CAMERA)).toBe('capture-condition-mismatch');
     expect(controller.guidance(CAMERA)).toBe('');
+  });
+
+  it('waits for its own look before a solve by hand starts', async () => {
+    // The look leaves the state at ready, so nothing else stopped a solve
+    // starting under it, and the view it landed was in neither half.
+    const {controller, clock, captureSample, solve} = await started();
+    await clock.run(10);
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const detect = captureSample.getMockImplementation();
+    captureSample.mockImplementationOnce(async (...args) => {
+      await gate;
+      return detect!(...args);
+    });
+    const look = clock.run(1);
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+    const asked = controller.solve(CAMERA);
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+    expect(solve).not.toHaveBeenCalled();
+    finish?.();
+    await look;
+    await asked;
+    const [fittedViews] = solve.mock.calls[0] as unknown as [readonly unknown[]];
+    const fitted = fittedViews.length;
+    expect(fitted + controller.holdoutSampleCount(CAMERA)).toBe(11);
+    expect(controller.state(CAMERA)).toBe('solved');
+  });
+
+  it('takes a view as asked while its own look is under way', async () => {
+    // The look declines an empty frame quietly. Handed back as the answer to
+    // "add a sample", that read as a success that added nothing.
+    const {controller, clock, captureSample} = await started({detect: () => undefined});
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    captureSample.mockImplementationOnce(async () => {
+      await gate;
+      return {sample: undefined, markersSeen: 0};
+    });
+    const look = clock.run(1);
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+    const asked = controller.addSample(CAMERA);
+    finish?.();
+    await look;
+    await expect(asked).rejects.toThrow(/board-not-found/u);
+  });
+
+  it('keeps asking for more tilt while the board has not moved', async () => {
+    // A look 250 ms after the set was judged usually finds the same view, and
+    // "move or tilt" replaced the instruction the set as a whole still needed.
+    const {controller, clock} = await started({
+      detect: (index) => (index < 12 ? sample(index, false) : sample(11, false))
+    });
+    await clock.run(12);
+    expect(controller.guidance(CAMERA)).toBe('tilt-more');
+    await clock.run(2);
+    expect(controller.guidance(CAMERA)).toBe('tilt-more');
+  });
+
+  it('does not reach the last step on a solve its own fit error refuses', async () => {
+    const {controller, clock} = await started({reprojectionErrorPx: 3, holdoutError: 1});
+    await clock.run(16);
+    expect(controller.state(CAMERA)).toBe('ready');
+    expect(controller.progress(CAMERA)).toBeLessThan(16);
   });
 
   it('holds the answer against views it was not fitted to', async () => {

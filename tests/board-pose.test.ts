@@ -49,7 +49,7 @@ function setup(
     backend: {name: 'mock-calibration-backend', create: async () => backend},
     nowMilliseconds: () => Date.parse('2026-09-16T12:00:00Z')
   });
-  return {controller, measurePose, release, acquireCamera, frame};
+  return {controller, measurePose, release, acquireCamera, frame, lease};
 }
 
 function samplePose(): BoardPoseSolution {
@@ -213,6 +213,33 @@ describe('measuring where the board is', () => {
     await controller.importProfile('camera-1', PROFILE);
     await controller.measureBoardPose({cameraId: 'camera-1', board: BOARD, scaleSource: 'nominal'});
     expect(measurePose).toHaveBeenCalledOnce();
+  });
+
+  it('neither writes a pose nor starts a solver once cleaned up mid-measurement', async () => {
+    // Disposal cleans up every camera and then ends the solver. A measurement
+    // still waiting for its camera resumed after that, started a new solver
+    // nothing would end, and wrote a pose the cleanup had just cleared.
+    const {controller, measurePose, acquireCamera, lease, release} = setup();
+    await controller.importProfile('camera-1', PROFILE);
+    let grant: (() => void) | undefined;
+    acquireCamera.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          grant = () => resolve(lease);
+        })
+    );
+    const measuring = controller.measureBoardPose({
+      cameraId: 'camera-1',
+      board: BOARD,
+      scaleSource: 'nominal'
+    });
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+    const cleaning = controller.cleanupAll();
+    grant?.();
+    await Promise.all([measuring, cleaning]);
+    expect(measurePose).not.toHaveBeenCalled();
+    expect(controller.boardPoseJson('camera-1')).toBe('');
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('refuses a board the marker dictionary cannot fill before taking the camera', async () => {
