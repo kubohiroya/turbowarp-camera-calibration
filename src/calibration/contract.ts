@@ -98,6 +98,31 @@ export type CalibrationGuidance =
   | 'complete';
 
 /**
+ * How far a session has come, counted in sixteen steps.
+ *
+ * Four gates of four steps, in the order they have to be passed. A gate is
+ * what actually stops the session finishing, so this is not a guess at how
+ * long is left: it is how much of what is required has been done.
+ *
+ * | steps | gate | done when |
+ * |---|---|---|
+ * | 0-3 | enough views to solve from at all | the minimum sample count |
+ * | 4-7 | enough tilt to solve from | the minimum pose spread |
+ * | 8-11 | enough views to hold some back | the automatic completion count |
+ * | 12-15 | the answer holding up on the views it was not fitted to | the hold-out error under the limit |
+ * | 16 | solved | -- |
+ *
+ * Counted in order and stopped at the first unfinished gate, so the step
+ * number says which gate is being worked on as well as how far into it. And
+ * never decreasing: the spread of a set can fall when a view is replaced, and
+ * an operator hearing the count go backwards would reasonably think they had
+ * broken something.
+ */
+export const CALIBRATION_GATES = 4;
+export const CALIBRATION_STEPS_PER_GATE = 4;
+export const CALIBRATION_PROGRESS_STEPS = CALIBRATION_GATES * CALIBRATION_STEPS_PER_GATE;
+
+/**
  * Which way the board still has to be turned.
  *
  * Two axes, one sign at a time. `top-near` and `top-far` turn it about the

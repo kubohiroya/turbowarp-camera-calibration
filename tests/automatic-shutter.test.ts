@@ -355,6 +355,45 @@ describe('the automatic shutter', () => {
     expect(asked).not.toBe('');
   });
 
+  it('counts progress by what is actually stopping the session', () => {
+    // Not a guess at how long is left. Each gate is a thing the session cannot
+    // finish without, counted in the order it has to be passed -- so the
+    // number says which gate is being worked on as well as how far into it.
+    const {controller} = setup();
+    expect(controller.progress(CAMERA)).toBe(0);
+  });
+
+  it('will not count past the gate that is failing', async () => {
+    // Forty look-alike views pass the first gate and stop dead at the second.
+    // A count that kept rising would be telling the operator that holding the
+    // board still was working.
+    const {controller, clock} = await started({
+      detect: (index) => sample(index, false),
+    });
+    await clock.run(60);
+    expect(controller.sampleCount(CAMERA)).toBeGreaterThanOrEqual(12);
+    // Through the first gate, stopped inside the second.
+    expect(controller.progress(CAMERA)).toBeGreaterThanOrEqual(4);
+    expect(controller.progress(CAMERA)).toBeLessThan(8);
+  });
+
+  it('reaches the end of the ladder when the session finishes', async () => {
+    const {controller, clock} = await started();
+    await clock.run(14);
+    expect(controller.state(CAMERA)).toBe('solved');
+    expect(controller.progress(CAMERA)).toBe(16);
+  });
+
+  it('never counts backwards', async () => {
+    // Replacing a view can lower the spread of the set, and an operator
+    // hearing the count fall would think they had broken something.
+    const {controller, clock} = await started({holdoutError: 9});
+    await clock.run(20);
+    const reached = controller.progress(CAMERA);
+    await clock.run(60);
+    expect(controller.progress(CAMERA)).toBeGreaterThanOrEqual(reached);
+  });
+
   it('stops watching when the operator takes the shutter back', async () => {
     const {controller, clock} = await started();
     await clock.run(2);

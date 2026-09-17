@@ -132,6 +132,16 @@
       ]
     },
     {
+      "opcode": "cameraCalibrationProgress",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cameraCalibrationReady",
       "blockType": "BOOLEAN",
       "arguments": [

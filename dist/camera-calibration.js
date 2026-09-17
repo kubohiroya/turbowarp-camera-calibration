@@ -129,6 +129,16 @@
   			} }
   		},
   		{
+  			"opcode": "cameraCalibrationProgress",
+  			"blockType": "REPORTER",
+  			"text": "camera calibration progress [CAMERA_ID]",
+  			"description": "Returns how far the session has come, from 0 to 16. Four gates of four steps: enough views to solve from, enough tilt among them, enough views to hold some back, and the answer holding up on the views it was not fitted to. Counted in order and stopped at the first unfinished gate, so the number says which gate is being worked on as well as how far into it. Never falls. Sixteen because that is enough to sound like progress and few enough to hear as distinct.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
   			"opcode": "solveCameraCalibration",
   			"blockType": "COMMAND",
   			"text": "solve calibration for camera [CAMERA_ID]",
@@ -962,6 +972,7 @@
   		this.automatic = false;
   		this.guidanceCode = "";
   		this.noveltyNow = 0;
+  		this.progressReached = 0;
   		this.solvedFrom = 0;
   	}
   	async start(options) {
@@ -1020,6 +1031,7 @@
   		this.lease = lease;
   		this.samples = [];
   		this.solvedFrom = 0;
+  		this.progressReached = 0;
   		this.sessionSampleCount = 0;
   		this.sampleQuality = 0;
   		this.reprojectionError = 0;
@@ -1067,6 +1079,34 @@
   	}
   	novelty() {
   		return this.noveltyNow;
+  	}
+  	/**
+  	* How far the session has come, in steps of the sixteen.
+  	*
+  	* Counted gate by gate in the order they have to be passed, stopping at the
+  	* first one not finished -- so the number says which gate is being worked on
+  	* as well as how far into it. Held at its highest: a set's spread can fall
+  	* when a view is replaced, and a count that went backwards would tell the
+  	* operator they had broken something they had not.
+  	*/
+  	progress() {
+  		if (this.calibrationState === "solved") return 16;
+  		const session = this.session;
+  		if (!session) return this.progressReached;
+  		const shares = [
+  			this.samples.length / MINIMUM_SAMPLES,
+  			poseSpread(this.samples, session.board) / MINIMUM_POSE_SPREAD,
+  			(this.samples.length - MINIMUM_SAMPLES) / 4,
+  			this.holdoutCount > 0 && this.holdoutError > 0 ? session.maximumReprojectionErrorPx / this.holdoutError : 0
+  		];
+  		let steps = 0;
+  		for (const share of shares) {
+  			const passed = Math.max(0, Math.min(4, Math.floor(share * 4)));
+  			steps += passed;
+  			if (passed < 4) break;
+  		}
+  		this.progressReached = Math.max(this.progressReached, steps);
+  		return this.progressReached;
   	}
   	/** Which way to turn the board next. Empty outside a live session. */
   	tiltDirection() {
@@ -1664,6 +1704,9 @@
   	tiltDirection(cameraId) {
   		return this.existing(cameraId)?.tiltDirection() ?? "";
   	}
+  	progress(cameraId) {
+  		return this.existing(cameraId)?.progress() ?? 0;
+  	}
   	cancel(cameraId) {
   		return this.existing(cameraId)?.cancel() ?? Promise.resolve();
   	}
@@ -2207,9 +2250,9 @@
   var runtimeCapabilityKey = "kubohiroyaCameraCalibrationCapability";
   function createRuntimeCapability(host) {
   	const capability = {
-  		version: 3,
+  		version: 4,
   		requireVersion(version) {
-  			if (!Number.isInteger(version) || version < 1 || version > 3) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 3.`);
+  			if (!Number.isInteger(version) || version < 1 || version > 4) throw new Error(`Unsupported Camera Calibration runtime capability version: ${version}; this build provides 4.`);
   			return capability;
   		},
   		start: (options) => host.start(options),
@@ -2219,6 +2262,7 @@
   		guidance: (cameraId) => host.guidance(cameraId),
   		novelty: (cameraId) => host.novelty(cameraId),
   		tiltDirection: (cameraId) => host.tiltDirection(cameraId),
+  		progress: (cameraId) => host.progress(cameraId),
   		solve: (cameraId) => host.solve(cameraId),
   		publish: (cameraId) => host.publish(cameraId),
   		cancel: (cameraId) => host.cancel(cameraId),
@@ -2326,6 +2370,9 @@
   	cameraCalibrationTiltDirection(args) {
   		return this.controller.tiltDirection(normalizeId(args.CAMERA_ID));
   	}
+  	cameraCalibrationProgress(args) {
+  		return this.controller.progress(normalizeId(args.CAMERA_ID));
+  	}
   	async solveCameraCalibration(args) {
   		await this.controller.solve(normalizeId(args.CAMERA_ID));
   	}
@@ -2414,6 +2461,7 @@
   			guidance: (cameraId) => this.controller.guidance(normalizeId(cameraId)),
   			novelty: (cameraId) => this.controller.novelty(normalizeId(cameraId)),
   			tiltDirection: (cameraId) => this.controller.tiltDirection(normalizeId(cameraId)),
+  			progress: (cameraId) => this.controller.progress(normalizeId(cameraId)),
   			solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
   			publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
   			cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),

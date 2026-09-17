@@ -23,6 +23,10 @@ export type {
   CalibrationState,
   TiltDirection
 } from './contract.js';
+import {
+  CALIBRATION_PROGRESS_STEPS,
+  CALIBRATION_STEPS_PER_GATE
+} from './contract.js';
 import type {
   BoardPoseOptions,
   CalibrationErrorCode,
@@ -177,6 +181,8 @@ class CameraCalibration {
   private guidanceCode: CalibrationGuidance = '';
   /** How much the view the shutter last looked at would add. */
   private noveltyNow = 0;
+  /** The furthest along this session has been, in steps. Never falls. */
+  private progressReached = 0;
   /** Sample count the last automatic solve was started from. */
   private solvedFrom = 0;
 
@@ -252,6 +258,7 @@ class CameraCalibration {
     this.lease = lease;
     this.samples = [];
     this.solvedFrom = 0;
+    this.progressReached = 0;
     this.sessionSampleCount = 0;
     this.sampleQuality = 0;
     this.reprojectionError = 0;
@@ -306,6 +313,47 @@ class CameraCalibration {
 
   public novelty(): number {
     return this.noveltyNow;
+  }
+
+  /**
+   * How far the session has come, in steps of the sixteen.
+   *
+   * Counted gate by gate in the order they have to be passed, stopping at the
+   * first one not finished -- so the number says which gate is being worked on
+   * as well as how far into it. Held at its highest: a set's spread can fall
+   * when a view is replaced, and a count that went backwards would tell the
+   * operator they had broken something they had not.
+   */
+  public progress(): number {
+    if (this.calibrationState === 'solved') return CALIBRATION_PROGRESS_STEPS;
+    const session = this.session;
+    if (!session) return this.progressReached;
+    const shares = [
+      // Enough views to solve from at all.
+      this.samples.length / MINIMUM_SAMPLES,
+      // Enough tilt among them to solve from. Nothing else can substitute:
+      // this is the gate a set of forty look-alikes never passes.
+      poseSpread(this.samples, session.board) / MINIMUM_POSE_SPREAD,
+      // Enough views that some can be held back from the fit.
+      (this.samples.length - MINIMUM_SAMPLES) /
+        (AUTOMATIC_COMPLETE_SAMPLES - MINIMUM_SAMPLES),
+      // The answer holding up on the views it was not fitted to. Before a
+      // solve has run there is nothing to hold up, and that is not progress.
+      this.holdoutCount > 0 && this.holdoutError > 0
+        ? session.maximumReprojectionErrorPx / this.holdoutError
+        : 0
+    ];
+    let steps = 0;
+    for (const share of shares) {
+      const passed = Math.max(
+        0,
+        Math.min(CALIBRATION_STEPS_PER_GATE, Math.floor(share * CALIBRATION_STEPS_PER_GATE))
+      );
+      steps += passed;
+      if (passed < CALIBRATION_STEPS_PER_GATE) break;
+    }
+    this.progressReached = Math.max(this.progressReached, steps);
+    return this.progressReached;
   }
 
   /** Which way to turn the board next. Empty outside a live session. */
@@ -1148,6 +1196,10 @@ export class CameraCalibrationController {
 
   public tiltDirection(cameraId: string): TiltDirection {
     return this.existing(cameraId)?.tiltDirection() ?? '';
+  }
+
+  public progress(cameraId: string): number {
+    return this.existing(cameraId)?.progress() ?? 0;
   }
 
   public cancel(cameraId: string): Promise<void> {

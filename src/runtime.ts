@@ -16,6 +16,12 @@
  * nothing to do with versions.
  */
 
+export {
+  CALIBRATION_GATES,
+  CALIBRATION_PROGRESS_STEPS,
+  CALIBRATION_STEPS_PER_GATE
+} from './calibration/contract.js';
+
 export type {
   CalibrationErrorCode,
   CalibrationGuidance,

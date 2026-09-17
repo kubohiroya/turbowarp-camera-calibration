@@ -122,6 +122,18 @@
       }
     },
     {
+      "opcode": "cameraCalibrationProgress",
+      "blockType": "REPORTER",
+      "text": "camera calibration progress [CAMERA_ID]",
+      "description": "Returns how far the session has come, from 0 to 16. Four gates of four steps: enough views to solve from, enough tilt among them, enough views to hold some back, and the answer holding up on the views it was not fitted to. Counted in order and stopped at the first unfinished gate, so the number says which gate is being worked on as well as how far into it. Never falls. Sixteen because that is enough to sound like progress and few enough to hear as distinct.",
+      "arguments": {
+        "CAMERA_ID": {
+          "type": "STRING",
+          "defaultValue": "default"
+        }
+      }
+    },
+    {
       "opcode": "solveCameraCalibration",
       "blockType": "COMMAND",
       "text": "solve calibration for camera [CAMERA_ID]",

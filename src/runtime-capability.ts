@@ -22,7 +22,7 @@ import type {
 } from './calibration/contract.js';
 
 export const runtimeCapabilityKey = 'kubohiroyaCameraCalibrationCapability';
-export const runtimeCapabilityVersion = 3 as const;
+export const runtimeCapabilityVersion = 4 as const;
 
 export interface CameraCalibrationCapabilityV1 {
   readonly version: typeof runtimeCapabilityVersion;
@@ -81,6 +81,18 @@ export interface CameraCalibrationCapabilityV1 {
    * becomes one they can carry out.
    */
   tiltDirection(cameraId: string): TiltDirection;
+  /**
+   * How far the session has come, 0 to 16. Since v4.
+   *
+   * Four gates of four steps, counted in the order they have to be passed and
+   * stopped at the first unfinished one -- so the number says which gate is
+   * being worked on as well as how far into it. Never falls.
+   *
+   * For telling the operator where they are without their reading anything:
+   * sixteen steps is enough to sound like progress and few enough to be heard
+   * as distinct. `CALIBRATION_PROGRESS_STEPS` names the total.
+   */
+  progress(cameraId: string): number;
   /** Solves from the accepted samples and releases the camera. */
   solve(cameraId: string): Promise<void>;
   /** Hands the solved profile to Camera Source, which owns the profile contract. */
@@ -180,6 +192,7 @@ export function createRuntimeCapability(
     guidance: (cameraId) => host.guidance(cameraId),
     novelty: (cameraId) => host.novelty(cameraId),
     tiltDirection: (cameraId) => host.tiltDirection(cameraId),
+    progress: (cameraId) => host.progress(cameraId),
     solve: (cameraId) => host.solve(cameraId),
     publish: (cameraId) => host.publish(cameraId),
     cancel: (cameraId) => host.cancel(cameraId),

@@ -40,6 +40,11 @@ describe('the published runtime sub-entry', () => {
 
   it('publishes exactly the names a consumer is meant to reach for', () => {
     expect(Object.keys(runtimeEntry).sort()).toEqual([
+      // The shape of the progress ladder, so a consumer sonifying or drawing
+      // it does not write the numbers down and then disagree with the source.
+      'CALIBRATION_GATES',
+      'CALIBRATION_PROGRESS_STEPS',
+      'CALIBRATION_STEPS_PER_GATE',
       'cameraCalibrationExtensionId',
       'createRuntimeCapability',
       'readCameraCalibrationCapability',
@@ -47,7 +52,7 @@ describe('the published runtime sub-entry', () => {
       'runtimeCapabilityVersion'
     ]);
     expect(runtimeEntry.runtimeCapabilityKey).toBe('kubohiroyaCameraCalibrationCapability');
-    expect(runtimeEntry.runtimeCapabilityVersion).toBe(3);
+    expect(runtimeEntry.runtimeCapabilityVersion).toBe(4);
   });
 
   it('agrees with the extension about its own identity', () => {
