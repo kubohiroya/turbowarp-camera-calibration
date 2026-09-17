@@ -441,7 +441,17 @@ class CameraCalibration {
       this.reprojectionError <= session.maximumReprojectionErrorPx &&
       this.holdoutError <= session.maximumReprojectionErrorPx;
     if (!good) {
-      this.guide('keep-going');
+      // Which of the two numbers failed decides what to ask for, and they ask
+      // for different things. A fit that does not reproduce its own views is a
+      // collection problem -- more views. A fit that reproduces its own views
+      // and not the held-out ones is a variety problem: more of the same
+      // cannot fix it, and telling the operator to carry on is telling them to
+      // do the thing that is not working.
+      const overfitted =
+        this.holdoutCount > 0 &&
+        Number.isFinite(this.reprojectionError) &&
+        this.reprojectionError <= session.maximumReprojectionErrorPx;
+      this.guide(overfitted ? 'vary-more' : 'keep-going');
       return;
     }
     await this.finishSolve(session, lease, solution);
@@ -744,11 +754,12 @@ class CameraCalibration {
     const session = this.session;
     const lease = this.lease;
     if (!session || !lease) return;
-    if (this.samples.length >= MAXIMUM_SAMPLES) {
-      if (automatic) {
-        this.stopAutomatic();
-        return this.guide('limit-reached');
-      }
+    // The limit is the manual path's alone. A shutter that stops watching
+    // because it has looked forty times is a shutter that gives up on an
+    // operator who is still holding the board -- and the session it leaves
+    // behind is the one it already could not solve, so there is nothing to
+    // gain by protecting it. The automatic path makes room instead, below.
+    if (!automatic && this.samples.length >= MAXIMUM_SAMPLES) {
       this.reject('sample-limit', `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
     }
     // Not on the automatic path. `sampling` is what a project shows the
@@ -830,12 +841,49 @@ class CameraCalibration {
       if (automatic) return this.decline('move-or-tilt');
       this.reject('sample-too-similar', 'Move or tilt the board before capturing another sample.');
     }
+    if (automatic && this.samples.length >= MAXIMUM_SAMPLES) this.dropTheDullest(session);
     this.samples.push(accepted);
     this.sessionSampleCount = this.samples.length;
     this.sampleQuality = accepted.quality;
     this.calibrationState = 'ready';
     this.clearError();
     if (automatic) this.guide(this.advice(session));
+  }
+
+  /**
+   * Makes room by discarding the view that adds least.
+   *
+   * The set is capped because a solve over it is not free, not because the
+   * fortieth view is unwelcome. When the cap is reached the question is which
+   * forty to keep, and the answer is the forty that differ most: the view
+   * dropped is the one closest to another, so the set grows more varied rather
+   * than just older.
+   *
+   * Which is also what the operator is being asked for. A session that stalls
+   * at the cap stalls holding a set of near-duplicates, and the first tilted
+   * view to arrive afterwards should displace one of those.
+   */
+  private dropTheDullest(session: CalibrationSession): void {
+    let dullest = 0;
+    let smallest = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.samples.length; index += 1) {
+      const sample = this.samples[index];
+      if (!sample) continue;
+      let nearest = Number.POSITIVE_INFINITY;
+      for (let other = 0; other < this.samples.length; other += 1) {
+        const against = this.samples[other];
+        if (other === index || !against) continue;
+        nearest = Math.min(
+          nearest,
+          normalizedCornerDistance(sample, against, session.imageWidth, session.imageHeight)
+        );
+      }
+      if (nearest < smallest) {
+        smallest = nearest;
+        dullest = index;
+      }
+    }
+    this.samples.splice(dullest, 1);
   }
 
   /** Records what the operator should do next, without disturbing the state. */

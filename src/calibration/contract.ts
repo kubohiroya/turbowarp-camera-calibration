@@ -84,10 +84,16 @@ export type CalibrationGuidance =
   | 'tilt-more'
   /** Collecting; nothing is wrong. */
   | 'keep-going'
+  /**
+   * The answer so far does not hold up on views it was not fitted to.
+   *
+   * Distinct from `keep-going`, which is only ever "not enough yet". This one
+   * says the views collected are too alike to support an answer: the remedy is
+   * a wider range of distances and angles, not more of the same.
+   */
+  | 'vary-more'
   /** A solve is running on the views collected so far. */
   | 'solving'
-  /** The shutter stopped at the sample limit without reaching an answer. */
-  | 'limit-reached'
   /** Solved and validated. Nothing further is needed. */
   | 'complete';
 

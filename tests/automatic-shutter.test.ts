@@ -251,17 +251,37 @@ describe('the automatic shutter', () => {
     expect(clock.waiting()).toBe(0);
   });
 
-  it('will not finish on the fit error alone', async () => {
+  it('will not finish on the fit error alone, and says which number failed', async () => {
     // An overfitted answer reproduces the views it was made from. Held-out
     // views are what say whether it predicts anything else, and a session that
     // ended on the fit error would end exactly when the set was too small.
+    //
+    // The guidance separates the two failures because they ask for different
+    // things: a fit that cannot reproduce its own views wants more views, and
+    // one that reproduces its own and nothing else wants different ones. The
+    // second is the case here, and telling the operator to carry on would be
+    // telling them to do the thing that is not working.
     const {controller, clock, solve} = await started({holdoutError: 9});
     await clock.run(16);
     expect(solve).toHaveBeenCalled();
     expect(controller.state(CAMERA)).toBe('ready');
     expect(controller.automatic(CAMERA)).toBe(true);
-    expect(controller.guidance(CAMERA)).toBe('keep-going');
+    expect(controller.guidance(CAMERA)).toBe('vary-more');
     expect(controller.latestHoldoutError(CAMERA)).toBe(9);
+  });
+
+  it('keeps watching at the sample limit, making room instead of stopping', async () => {
+    // A shutter that stops because it has looked forty times gives up on an
+    // operator who is still holding the board -- and the set it leaves behind
+    // is the one it already could not solve from. The next tilted view is
+    // worth more than the dullest of the forty.
+    const {controller, clock} = await started({holdoutError: 9});
+    await clock.run(120);
+    expect(controller.sampleCount(CAMERA)).toBe(40);
+    expect(controller.automatic(CAMERA)).toBe(true);
+    expect(controller.errorCode(CAMERA)).toBe('');
+    // Nothing anywhere says the shutter gave up, because it did not.
+    expect(controller.guidance(CAMERA)).not.toBe('limit-reached');
   });
 
   it('holds the answer against views it was not fitted to', async () => {

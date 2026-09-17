@@ -102,7 +102,7 @@
   			"opcode": "cameraCalibrationGuidance",
   			"blockType": "REPORTER",
   			"text": "camera calibration guidance [CAMERA_ID]",
-  			"description": "Returns what the operator should do next while automatic capture runs: show-the-board, wrong-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions. wrong-board means markers are in frame that do not make the board being calibrated -- almost always one of the other boards.",
+  			"description": "Returns what the operator should do next while automatic capture runs: show-the-board, wrong-board, hold-steadier, move-or-tilt, tilt-more, keep-going, vary-more, solving, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions. wrong-board means markers are in frame that do not make the board being calibrated. vary-more means the answer reproduces the views it was fitted to and not the ones it was not, which more of the same views cannot fix.",
   			"arguments": { "CAMERA_ID": {
   				"type": "STRING",
   				"defaultValue": "default"
@@ -303,7 +303,7 @@
   			"opcode": "cameraCalibrationErrorCode",
   			"blockType": "REPORTER",
   			"text": "camera [CAMERA_ID] calibration error code",
-  			"description": "Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string. wrong-board means markers were in frame that do not make the board being calibrated.",
+  			"description": "Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string.",
   			"arguments": { "CAMERA_ID": {
   				"type": "STRING",
   				"defaultValue": "default"
@@ -1094,7 +1094,8 @@
   		this.holdoutError = holdoutError;
   		this.holdoutCount = heldOut.length;
   		if (!(this.holdoutCount > 0 && Number.isFinite(this.reprojectionError) && Number.isFinite(this.holdoutError) && this.reprojectionError <= session.maximumReprojectionErrorPx && this.holdoutError <= session.maximumReprojectionErrorPx)) {
-  			this.guide("keep-going");
+  			const overfitted = this.holdoutCount > 0 && Number.isFinite(this.reprojectionError) && this.reprojectionError <= session.maximumReprojectionErrorPx;
+  			this.guide(overfitted ? "vary-more" : "keep-going");
   			return;
   		}
   		await this.finishSolve(session, lease, solution);
@@ -1314,13 +1315,7 @@
   		const session = this.session;
   		const lease = this.lease;
   		if (!session || !lease) return;
-  		if (this.samples.length >= MAXIMUM_SAMPLES) {
-  			if (automatic) {
-  				this.stopAutomatic();
-  				return this.guide("limit-reached");
-  			}
-  			this.reject("sample-limit", `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
-  		}
+  		if (!automatic && this.samples.length >= MAXIMUM_SAMPLES) this.reject("sample-limit", `At most ${MAXIMUM_SAMPLES} samples may be retained.`);
   		if (!automatic) this.calibrationState = "sampling";
   		let frame;
   		try {
@@ -1358,12 +1353,45 @@
   			if (automatic) return this.decline("move-or-tilt");
   			this.reject("sample-too-similar", "Move or tilt the board before capturing another sample.");
   		}
+  		if (automatic && this.samples.length >= MAXIMUM_SAMPLES) this.dropTheDullest(session);
   		this.samples.push(accepted);
   		this.sessionSampleCount = this.samples.length;
   		this.sampleQuality = accepted.quality;
   		this.calibrationState = "ready";
   		this.clearError();
   		if (automatic) this.guide(this.advice(session));
+  	}
+  	/**
+  	* Makes room by discarding the view that adds least.
+  	*
+  	* The set is capped because a solve over it is not free, not because the
+  	* fortieth view is unwelcome. When the cap is reached the question is which
+  	* forty to keep, and the answer is the forty that differ most: the view
+  	* dropped is the one closest to another, so the set grows more varied rather
+  	* than just older.
+  	*
+  	* Which is also what the operator is being asked for. A session that stalls
+  	* at the cap stalls holding a set of near-duplicates, and the first tilted
+  	* view to arrive afterwards should displace one of those.
+  	*/
+  	dropTheDullest(session) {
+  		let dullest = 0;
+  		let smallest = Number.POSITIVE_INFINITY;
+  		for (let index = 0; index < this.samples.length; index += 1) {
+  			const sample = this.samples[index];
+  			if (!sample) continue;
+  			let nearest = Number.POSITIVE_INFINITY;
+  			for (let other = 0; other < this.samples.length; other += 1) {
+  				const against = this.samples[other];
+  				if (other === index || !against) continue;
+  				nearest = Math.min(nearest, normalizedCornerDistance(sample, against, session.imageWidth, session.imageHeight));
+  			}
+  			if (nearest < smallest) {
+  				smallest = nearest;
+  				dullest = index;
+  			}
+  		}
+  		this.samples.splice(dullest, 1);
   	}
   	/** Records what the operator should do next, without disturbing the state. */
   	guide(guidance) {

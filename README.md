@@ -240,7 +240,7 @@ Reports whether the shutter is watching that camera on its own. It stops by itse
 
 ### `camera calibration guidance [CAMERA_ID]`
 
-Returns what the operator should do next while automatic capture runs: show-the-board, wrong-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions. wrong-board means markers are in frame that do not make the board being calibrated -- almost always one of the other boards.
+Returns what the operator should do next while automatic capture runs: show-the-board, wrong-board, hold-steadier, move-or-tilt, tilt-more, keep-going, vary-more, solving, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions. wrong-board means markers are in frame that do not make the board being calibrated. vary-more means the answer reproduces the views it was fitted to and not the ones it was not, which more of the same views cannot fix.
 
 | Property | Value |
 |---|---|
@@ -416,7 +416,7 @@ Returns how many samples were held back from the solve. Zero means nothing was v
 
 ### `camera [CAMERA_ID] calibration error code`
 
-Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string. wrong-board means markers were in frame that do not make the board being calibrated.
+Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string.
 
 | Property | Value |
 |---|---|
