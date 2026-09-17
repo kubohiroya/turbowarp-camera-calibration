@@ -9,7 +9,7 @@ import {
   type DistortionModel as CameraSourceDistortionModel
 } from '@kubohiroya/turbowarp-camera-source/runtime';
 import {DISTORTION_COEFFICIENT_COUNTS, type DistortionModel} from './types.js';
-import type {CameraIntrinsicsV1} from './profile.js';
+import type {CalibrationCapture, CalibrationDevice, CameraIntrinsicsV1} from './profile.js';
 
 export type {CameraFrameSource, CameraLease};
 
@@ -59,6 +59,47 @@ export function requireCameraSource(runtime: TurboWarpRuntime): {
  * an extension that is loaded but not offering profiles is distinguishable from
  * one that is absent, and neither is reported as the other.
  */
+/**
+ * How the camera is configured right now, as Camera Source reports it.
+ *
+ * Undefined when there is no capability to ask, or it has no answer: a
+ * calibration can still be solved without this, it just cannot later be judged
+ * compatible with anything. Never throws -- this is recorded alongside a
+ * calibration, and a calibration must not fail for want of a footnote.
+ */
+export function captureConditionsOf(
+  runtime: TurboWarpRuntime,
+  cameraId: string
+): {capture: CalibrationCapture; device: CalibrationDevice} | undefined {
+  const capability = readCameraSourceCapability(runtime) as
+    | {conditionsFor?: (cameraId: string) => Record<string, unknown>}
+    | undefined;
+  if (typeof capability?.conditionsFor !== 'function') return undefined;
+  let conditions: Record<string, unknown>;
+  try {
+    conditions = capability.conditionsFor(cameraId);
+  } catch {
+    return undefined;
+  }
+  const capture: CalibrationCapture = {};
+  for (const key of ['resizeMode', 'focusMode', 'facingMode'] as const) {
+    const value = conditions[key];
+    if (typeof value === 'string') capture[key] = value;
+  }
+  for (const key of ['zoom', 'focusDistance', 'frameRate'] as const) {
+    const value = conditions[key];
+    if (typeof value === 'number' && Number.isFinite(value)) capture[key] = value;
+  }
+  const device: CalibrationDevice = {};
+  if (typeof conditions.label === 'string' && conditions.label.length > 0) {
+    device.label = conditions.label;
+  }
+  if (typeof conditions.deviceId === 'string' && conditions.deviceId.length > 0) {
+    device.deviceId = conditions.deviceId;
+  }
+  return {capture, device};
+}
+
 export function requireProfileRegistry(
   runtime: TurboWarpRuntime
 ): CameraSourceCapabilityV1 {
@@ -129,9 +170,16 @@ export function toCameraSourceProfile(profile: CameraIntrinsicsV1): CameraIntrin
       coefficients: [...profile.distortionCoefficients]
     }
   } as const satisfies Omit<CameraIntrinsicProfileV1, 'version' | 'quality'>;
-  return profile.quality
-    ? {...document, version: 1, quality: {...profile.quality}}
-    : {...document, version: 1};
+  // Carried across so Camera Source can say the profile fits the camera it was
+  // made on. Without them its verdict on a fresh calibration is "cannot be
+  // determined", which is true and useless.
+  return {
+    ...document,
+    version: 1,
+    ...(profile.quality ? {quality: {...profile.quality}} : {}),
+    ...(profile.capture ? {capture: {...profile.capture}} : {}),
+    ...(profile.device ? {device: {...profile.device}} : {})
+  } as CameraIntrinsicProfileV1;
 }
 
 /**

@@ -393,6 +393,65 @@ describe('CameraCalibrationController', () => {
     expect(context.release).toHaveBeenCalledOnce();
   });
 
+  it('records how the camera was configured, so its own profile can be judged to fit', async () => {
+    // A profile without capture conditions can never be judged compatible --
+    // not even with the camera it was solved on a moment ago. That was what an
+    // operator saw: a fresh calibration, and "cannot be determined".
+    const context = setup();
+    Object.assign(context.capability, {
+      conditionsFor: vi.fn(() => ({
+        width: 800,
+        height: 600,
+        deviceId: 'device-1',
+        previewFlip: 'none',
+        label: 'FaceTime HD Camera',
+        frameRate: 30,
+        facingMode: 'user',
+        resizeMode: 'none',
+        focusMode: 'continuous'
+      }))
+    });
+    await context.controller.start(startOptions);
+    await fillSamples(context.controller);
+    await context.controller.solve('camera-1');
+    const profile = JSON.parse(context.controller.profileJson('camera-1')) as {
+      capture?: Record<string, unknown>;
+      device?: Record<string, unknown>;
+    };
+    expect(profile.capture).toEqual({
+      resizeMode: 'none',
+      focusMode: 'continuous',
+      facingMode: 'user',
+      frameRate: 30
+    });
+    // Members the camera did not report are left out, not guessed: absent on
+    // both sides is what Camera Source counts as the same.
+    expect(profile.capture).not.toHaveProperty('zoom');
+    expect(profile.device).toEqual({label: 'FaceTime HD Camera', deviceId: 'device-1'});
+
+    // And it survives being read back, which is how it reaches the next app.
+    expect(context.controller.validateProfile('camera-1', JSON.stringify(profile))).toBe(true);
+    await context.controller.publishProfile('camera-1');
+    const published = context.registerProfile.mock.calls.at(-1)?.[0] as {
+      capture?: unknown;
+      device?: unknown;
+    };
+    expect(published.capture).toEqual(profile.capture);
+    expect(published.device).toEqual(profile.device);
+  });
+
+  it('still calibrates when the camera cannot say how it is configured', async () => {
+    // A footnote, not a precondition. Without it the profile is solved and
+    // published as before; it simply cannot later be judged to fit.
+    const context = setup();
+    await context.controller.start(startOptions);
+    await fillSamples(context.controller);
+    await context.controller.solve('camera-1');
+    const profile = JSON.parse(context.controller.profileJson('camera-1')) as object;
+    expect(profile).not.toHaveProperty('capture');
+    expect(context.controller.state('camera-1')).toBe('solved');
+  });
+
   it('keeps a running session when the board arguments are invalid', async () => {
     const {controller, release} = setup();
     await controller.start(startOptions);

@@ -50,7 +50,38 @@ export interface CameraIntrinsicsV1 {
   distortionCoefficients: number[];
   /** Absent when the source of the profile did not measure it. */
   quality?: CalibrationQuality;
+  /**
+   * How the camera was configured when the views were taken.
+   *
+   * Absent in a profile written before this was recorded. A profile without it
+   * can never be judged compatible with any camera -- including the one it was
+   * solved on, a moment ago -- because nothing says whether the optics are set
+   * as they were. That is the reason it is recorded: the verdict an operator
+   * saw on their own fresh calibration was "cannot be determined".
+   */
+  capture?: CalibrationCapture;
+  /** What the camera called itself. A hint for matching, never proof. */
+  device?: CalibrationDevice;
   calibratedAt: string;
+}
+
+/**
+ * The capture settings that change how a lens projects, as the camera reported
+ * them. A member the camera did not report is left out rather than guessed:
+ * absent on both sides compares as the same, absent on one side as unknown.
+ */
+export interface CalibrationCapture {
+  resizeMode?: string;
+  zoom?: number;
+  focusMode?: string;
+  focusDistance?: number;
+  frameRate?: number;
+  facingMode?: string;
+}
+
+export interface CalibrationDevice {
+  label?: string;
+  deviceId?: string;
 }
 
 export type CalibrationProfileErrorCode = 'invalid-calibration' | 'credential-forbidden';
@@ -79,12 +110,14 @@ export const CAMERA_INTRINSICS_PROPERTIES = [
   'distortionModel',
   'distortionCoefficients',
   'quality',
+  'capture',
+  'device',
   'calibratedAt'
 ] as const;
 
-/** Every property except `quality`, which is absent when it was not measured. */
+/** Every property except the ones a producer may not have measured. */
 export const CAMERA_INTRINSICS_REQUIRED = CAMERA_INTRINSICS_PROPERTIES.filter(
-  (name) => name !== 'quality'
+  (name) => name !== 'quality' && name !== 'capture' && name !== 'device'
 );
 
 export const CAMERA_MODELS: readonly CameraModel[] = ['pinhole'];
@@ -161,6 +194,8 @@ function parseIntrinsicsProfile(record: Record<string, unknown>): CameraIntrinsi
   );
   const calibratedAt = utcDateTime(record.calibratedAt, '/calibratedAt');
   const quality = record.quality === undefined ? undefined : parseQuality(record.quality);
+  const capture = record.capture === undefined ? undefined : parseCapture(record.capture);
+  const device = record.device === undefined ? undefined : parseDevice(record.device);
   const profile: CameraIntrinsicsV1 = {
     schema: CAMERA_INTRINSICS_SCHEMA_ID,
     version: CAMERA_INTRINSICS_VERSION,
@@ -175,7 +210,54 @@ function parseIntrinsicsProfile(record: Record<string, unknown>): CameraIntrinsi
     distortionCoefficients,
     calibratedAt
   };
-  return quality === undefined ? profile : {...profile, quality};
+  return {
+    ...profile,
+    ...(quality === undefined ? {} : {quality}),
+    ...(capture === undefined ? {} : {capture}),
+    ...(device === undefined ? {} : {device})
+  };
+}
+
+function parseCapture(value: unknown): CalibrationCapture {
+  const record = requireRecord(value, '/capture');
+  const text = ['resizeMode', 'focusMode', 'facingMode'] as const;
+  const numbers = ['zoom', 'focusDistance', 'frameRate'] as const;
+  const capture: CalibrationCapture = {};
+  for (const key of Object.keys(record)) {
+    if (!(text as readonly string[]).includes(key) && !(numbers as readonly string[]).includes(key)) {
+      throw invalid(`/capture/${key}`, 'is not part of the v1 capture record');
+    }
+  }
+  for (const key of text) {
+    const entry = record[key];
+    if (entry === undefined) continue;
+    if (typeof entry !== 'string' || entry.length > 64) {
+      throw invalid(`/capture/${key}`, 'must be a string of at most 64 characters');
+    }
+    capture[key] = entry;
+  }
+  for (const key of numbers) {
+    const entry = record[key];
+    if (entry === undefined) continue;
+    capture[key] = boundedNumber(entry, `/capture/${key}`);
+  }
+  return capture;
+}
+
+function parseDevice(value: unknown): CalibrationDevice {
+  const record = requireRecord(value, '/device');
+  const device: CalibrationDevice = {};
+  for (const key of Object.keys(record)) {
+    if (key !== 'label' && key !== 'deviceId') {
+      throw invalid(`/device/${key}`, 'is not part of the v1 device record');
+    }
+    const entry = record[key];
+    if (typeof entry !== 'string' || entry.length > 256) {
+      throw invalid(`/device/${key}`, 'must be a string of at most 256 characters');
+    }
+    device[key] = entry;
+  }
+  return device;
 }
 
 /**
