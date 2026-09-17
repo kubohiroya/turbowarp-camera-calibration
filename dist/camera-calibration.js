@@ -119,6 +119,16 @@
   			} }
   		},
   		{
+  			"opcode": "cameraCalibrationTiltDirection",
+  			"blockType": "REPORTER",
+  			"text": "camera calibration tilt direction [CAMERA_ID]",
+  			"description": "Returns which way the board still has to be turned: top-near, top-far, left-near, right-near, or empty outside a live session. The direction least represented in what has been collected, so that \"tilt it more\" -- an instruction the operator has to interpret -- becomes one they can carry out.",
+  			"arguments": { "CAMERA_ID": {
+  				"type": "STRING",
+  				"defaultValue": "default"
+  			} }
+  		},
+  		{
   			"opcode": "solveCameraCalibration",
   			"blockType": "COMMAND",
   			"text": "solve calibration for camera [CAMERA_ID]",
@@ -745,6 +755,44 @@
   	y: 0
   });
   /**
+  * Which way the board still has to be turned.
+  *
+  * `x` is the upper half's grid steps against the lower half's, so a positive
+  * `x` is a board whose top is nearer the camera. `y` is the left half against
+  * the right, so a positive `y` is a board whose left edge is nearer. The names
+  * are in the contract; the signs they correspond to are here.
+  */
+  /**
+  * The direction least represented in what has been collected.
+  *
+  * Each direction is scored by the furthest any held view reaches along it, and
+  * the weakest wins. Asking for the weakest rather than simply "more tilt"
+  * turns an instruction the operator has to interpret into one they can carry
+  * out, and it spreads the set on purpose rather than by luck.
+  *
+  * Nothing collected asks for the first direction rather than nothing at all:
+  * an operator holding a board square-on has to be told to start somewhere.
+  */
+  function weakestTiltDirection(samples, board) {
+  	const tilts = samples.map((sample) => tiltOf(sample, board));
+  	const reach = [
+  		["top-near", (tilt) => tilt.x],
+  		["top-far", (tilt) => -tilt.x],
+  		["left-near", (tilt) => tilt.y],
+  		["right-near", (tilt) => -tilt.y]
+  	];
+  	let weakest = "top-near";
+  	let smallest = Number.POSITIVE_INFINITY;
+  	for (const [direction, along] of reach) {
+  		const furthest = tilts.reduce((best, tilt) => Math.max(best, along(tilt)), 0);
+  		if (furthest < smallest) {
+  			smallest = furthest;
+  			weakest = direction;
+  		}
+  	}
+  	return weakest;
+  }
+  /**
   * The minimum spread of tilts a solve is allowed to proceed from.
   *
   * A board half as wide as its distance, tilted thirty degrees, gives an edge
@@ -1019,6 +1067,11 @@
   	}
   	novelty() {
   		return this.noveltyNow;
+  	}
+  	/** Which way to turn the board next. Empty outside a live session. */
+  	tiltDirection() {
+  		if (!this.session || !this.lease) return "";
+  		return weakestTiltDirection(this.samples, this.session.board);
   	}
   	/**
   	* Waits for the camera to hand over a frame with a size on it.
@@ -1608,6 +1661,9 @@
   	novelty(cameraId) {
   		return this.existing(cameraId)?.novelty() ?? 0;
   	}
+  	tiltDirection(cameraId) {
+  		return this.existing(cameraId)?.tiltDirection() ?? "";
+  	}
   	cancel(cameraId) {
   		return this.existing(cameraId)?.cancel() ?? Promise.resolve();
   	}
@@ -2162,6 +2218,7 @@
   		automatic: (cameraId) => host.automatic(cameraId),
   		guidance: (cameraId) => host.guidance(cameraId),
   		novelty: (cameraId) => host.novelty(cameraId),
+  		tiltDirection: (cameraId) => host.tiltDirection(cameraId),
   		solve: (cameraId) => host.solve(cameraId),
   		publish: (cameraId) => host.publish(cameraId),
   		cancel: (cameraId) => host.cancel(cameraId),
@@ -2266,6 +2323,9 @@
   	cameraCalibrationNovelty(args) {
   		return this.controller.novelty(normalizeId(args.CAMERA_ID));
   	}
+  	cameraCalibrationTiltDirection(args) {
+  		return this.controller.tiltDirection(normalizeId(args.CAMERA_ID));
+  	}
   	async solveCameraCalibration(args) {
   		await this.controller.solve(normalizeId(args.CAMERA_ID));
   	}
@@ -2353,6 +2413,7 @@
   			automatic: (cameraId) => this.controller.automatic(normalizeId(cameraId)),
   			guidance: (cameraId) => this.controller.guidance(normalizeId(cameraId)),
   			novelty: (cameraId) => this.controller.novelty(normalizeId(cameraId)),
+  			tiltDirection: (cameraId) => this.controller.tiltDirection(normalizeId(cameraId)),
   			solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
   			publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
   			cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),

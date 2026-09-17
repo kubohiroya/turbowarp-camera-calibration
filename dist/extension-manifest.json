@@ -182,6 +182,16 @@
       ]
     },
     {
+      "opcode": "cameraCalibrationTiltDirection",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cancelCameraCalibration",
       "blockType": "COMMAND",
       "arguments": [
