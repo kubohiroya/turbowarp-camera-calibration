@@ -34,6 +34,29 @@ class AnsweringWorker extends EventTarget {
   public start(): void {}
 }
 
+/** A worker that answers every call by throwing `name`, as comlink carries it. */
+class ThrowingWorker extends EventTarget {
+  public readonly terminate = vi.fn();
+  public constructor(private readonly name: string) {
+    super();
+  }
+  public postMessage(message: {id?: string}): void {
+    queueMicrotask(() => {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            id: message.id,
+            type: 'HANDLER',
+            name: 'throw',
+            value: {isError: true, value: {message: `${this.name} happened`, name: this.name}}
+          }
+        })
+      );
+    });
+  }
+  public start(): void {}
+}
+
 function setup(timeoutMs = 20) {
   const workers: SilentWorker[] = [];
   const backend = new WorkerCalibrationBackend({
@@ -96,5 +119,40 @@ describe('the worker the solver runs on', () => {
     expect(workers[0]?.terminate).toHaveBeenCalledOnce();
     await expect(backend.validate([], BOARD, SOLUTION)).resolves.toBe(0);
     expect(workers).toHaveLength(2);
+  });
+
+  it('ends a worker whose WebAssembly module aborted, and starts a new one next time', async () => {
+    // Emscripten's abort -- out of memory, a trap -- leaves the module dead
+    // and throws a RuntimeError. The worker still answers, with nothing but
+    // failures, so it is as gone as one that stopped answering.
+    const workers: ThrowingWorker[] = [];
+    const backend = new WorkerCalibrationBackend({
+      createWorker: () => {
+        const worker = new ThrowingWorker('RuntimeError');
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      timeoutMs: 60_000
+    });
+    await expect(backend.validate([], BOARD, SOLUTION)).rejects.toThrow(/RuntimeError happened/u);
+    expect(workers[0]?.terminate).toHaveBeenCalledOnce();
+    await expect(backend.validate([], BOARD, SOLUTION)).rejects.toThrow(/RuntimeError/u);
+    expect(workers).toHaveLength(2);
+  });
+
+  it('keeps a worker whose solver answered with an ordinary error', async () => {
+    const workers: ThrowingWorker[] = [];
+    const backend = new WorkerCalibrationBackend({
+      createWorker: () => {
+        const worker = new ThrowingWorker('Error');
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      timeoutMs: 60_000
+    });
+    await expect(backend.validate([], BOARD, SOLUTION)).rejects.toThrow(/Error happened/u);
+    await expect(backend.validate([], BOARD, SOLUTION)).rejects.toThrow(/Error happened/u);
+    expect(workers).toHaveLength(1);
+    expect(workers[0]?.terminate).not.toHaveBeenCalled();
   });
 });

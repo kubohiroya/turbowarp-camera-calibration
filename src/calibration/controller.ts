@@ -558,11 +558,13 @@ class CameraCalibration {
       session.imageWidth,
       session.imageHeight
     );
-    const holdoutError = await backend.validate(heldOut, session.board, solution);
+    const validation = await backend.validate(heldOut, session.board, solution);
     if (operation !== this.operation || !this.automatic) return;
     this.reprojectionError = solution.reprojectionErrorPx;
-    this.holdoutError = holdoutError;
-    this.holdoutCount = heldOut.length;
+    this.holdoutError = validation.reprojectionErrorPx;
+    // The views scored, not the ones handed in: an error over none of them is
+    // a zero that measured nothing.
+    this.holdoutCount = validation.sampleCount;
     // Both numbers, not either. The fit error says the answer reproduces the
     // views it was made from, which an overfitted answer also does; the
     // hold-out error says it predicts views it never saw. Ending a session on
@@ -715,10 +717,14 @@ class CameraCalibration {
       // hold is wrong in distance with nothing to show for it. Judged the way
       // a solve is judged before it lands; a profile that never recorded its
       // settings has nothing to compare, as before.
-      if (profile.capture) {
+      // A Camera Source that does not report settings at all -- one withholding
+      // its calibration capability, or one from before it could -- cannot say
+      // they changed either, and measuring as before is what it did.
+      const current = captureConditionsOf(this.runtime, this.cameraId);
+      if (profile.capture && current) {
         const drift = conditionsDrift(
           {capture: profile.capture, device: profile.device ?? {}},
-          captureConditionsOf(this.runtime, this.cameraId)
+          current
         );
         if (drift !== undefined) {
           this.refuse(
@@ -1143,7 +1149,7 @@ class CameraCalibration {
     this.calibrationState = 'solving';
     const {fitted, heldOut} = splitForValidation(this.samples);
     let solution;
-    let holdoutError = 0;
+    let validation = {reprojectionErrorPx: 0, sampleCount: 0};
     try {
       const backend = await this.resolveBackend();
       solution = await backend.solve(
@@ -1152,7 +1158,7 @@ class CameraCalibration {
         session.imageWidth,
         session.imageHeight
       );
-      holdoutError = await backend.validate(heldOut, session.board, solution);
+      validation = await backend.validate(heldOut, session.board, solution);
     } catch (error) {
       // A set the solver cannot answer for is not a lost session: more views
       // may fix it. Ending it here would also keep the camera leased by a
@@ -1161,8 +1167,8 @@ class CameraCalibration {
     }
     if (operation !== this.operation) return;
     this.reprojectionError = solution.reprojectionErrorPx;
-    this.holdoutError = holdoutError;
-    this.holdoutCount = heldOut.length;
+    this.holdoutError = validation.reprojectionErrorPx;
+    this.holdoutCount = validation.sampleCount;
     if (
       !Number.isFinite(this.reprojectionError) ||
       this.reprojectionError > session.maximumReprojectionErrorPx
@@ -1176,6 +1182,15 @@ class CameraCalibration {
     // The same bar the shutter sets. The fit error alone is met by an
     // overfitted answer -- exactly when the set was too small or too alike --
     // and a solve asked for by hand is not a reason to accept one.
+    // Views held back that could not be scored are not a pass. The poses were
+    // solved through this very answer, so failing to solve them is evidence
+    // against it, and a check that scored too few has not checked anything.
+    if (heldOut.length >= MINIMUM_HOLDOUT_VIEWS && this.holdoutCount < MINIMUM_HOLDOUT_VIEWS) {
+      this.reject(
+        'reprojection-too-high',
+        `Only ${this.holdoutCount} of ${heldOut.length} views held back from the fit could be posed with its answer, so it could not be checked. Add views and solve again.`
+      );
+    }
     if (
       heldOut.length >= MINIMUM_HOLDOUT_VIEWS &&
       (!Number.isFinite(this.holdoutError) ||

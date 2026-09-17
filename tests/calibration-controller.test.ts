@@ -5,7 +5,8 @@ import type {
   CalibrationBackendPort,
   CalibrationDetection,
   CalibrationSample,
-  CalibrationSolveResult
+  CalibrationSolveResult,
+  CalibrationValidationResult
 } from '../src/calibration/types.js';
 import type {CameraFrameSource, CameraLease} from '../src/calibration/camera-source.js';
 
@@ -53,10 +54,15 @@ function setup(schedule?: (callback: () => void, delayMs: number) => () => void)
   });
   // Returns a residual proportional to how many views were held back, so a
   // test can tell a validated solve from one that skipped validation.
-  const validate = vi.fn(async (held: readonly CalibrationSample[]): Promise<number> => {
-    split.heldOut = held.length;
-    return held.length === 0 ? 0 : 0.5 + held.length / 100;
-  });
+  const validate = vi.fn(
+    async (held: readonly CalibrationSample[]): Promise<CalibrationValidationResult> => {
+      split.heldOut = held.length;
+      return {
+        reprojectionErrorPx: held.length === 0 ? 0 : 0.5 + held.length / 100,
+        sampleCount: held.length
+      };
+    }
+  );
   const backend: CalibrationBackendPort = {
     name: 'mock-calibration-backend',
     captureSample,
@@ -282,7 +288,7 @@ describe('CameraCalibrationController', () => {
     // The bar the automatic path already sets. The fit error alone is met by
     // an overfitted answer, exactly when the set was too small or too alike.
     const {controller, validate, release} = setup();
-    validate.mockResolvedValue(4);
+    validate.mockResolvedValue({reprojectionErrorPx: 4, sampleCount: 2});
     await controller.start(startOptions);
     for (let index = 0; index < 12; index += 1) await controller.addSample('camera-1');
     await expect(controller.solve('camera-1')).rejects.toThrow(
@@ -293,11 +299,25 @@ describe('CameraCalibrationController', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it('refuses a solve whose held-out views could not be scored', async () => {
+    // A view whose pose cannot be solved is left out of the error. With none
+    // scored the error is a zero that measured nothing, not a pass.
+    const {controller, validate} = setup();
+    validate.mockResolvedValue({reprojectionErrorPx: 0, sampleCount: 0});
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) await controller.addSample('camera-1');
+    await expect(controller.solve('camera-1')).rejects.toThrow(
+      /reprojection-too-high: Only 0 of 2 views held back/u
+    );
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.holdoutSampleCount('camera-1')).toBe(0);
+  });
+
   it('does not refuse a solve on a single held-out view', async () => {
     // One view, possibly six corners of one: too noisy to refuse a
     // calibration on. It is still reported.
     const {controller, validate} = setup();
-    validate.mockResolvedValue(4);
+    validate.mockResolvedValue({reprojectionErrorPx: 4, sampleCount: 1});
     await controller.start(startOptions);
     for (let index = 0; index < 9; index += 1) await controller.addSample('camera-1');
     await controller.solve('camera-1');

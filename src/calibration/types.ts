@@ -161,7 +161,13 @@ export interface BoardPoseSolution {
 export interface CalibrationValidationResult {
   /** RMS reprojection error over the held-out views, in pixels. */
   reprojectionErrorPx: number;
-  /** How many views were held back. Zero means nothing was validated. */
+  /**
+   * How many held-out views were scored: the ones a pose could be solved for.
+   *
+   * Not how many were handed in. A view whose pose cannot be solved is left
+   * out of the error, so with none scored the error is a zero that measured
+   * nothing, and only this count says so.
+   */
   sampleCount: number;
 }
 
@@ -192,7 +198,7 @@ export interface CalibrationBackendPort {
     samples: readonly CalibrationSample[],
     board: CalibrationBoard,
     solution: CalibrationSolveResult
-  ): Promise<number>;
+  ): Promise<CalibrationValidationResult>;
   /**
    * Finds the board in one frame and solves where it is.
    *

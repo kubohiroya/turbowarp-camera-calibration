@@ -559,7 +559,7 @@ Returns the RMS reprojection error over the samples the solve was not fitted to.
 
 ### `camera [CAMERA_ID] calibration holdout sample count`
 
-Returns how many samples were held back from the solve. Zero means nothing was validated, so the holdout error says nothing.
+Returns how many samples held back from the solve were validated: the ones a pose could be solved for with its answer. Zero means nothing was validated, so the holdout error says nothing.
 
 | Property | Value |
 |---|---|
@@ -623,14 +623,15 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 | A view whose corners lie on one line of the board | Refused as `sample-low-quality` by hand; the automatic path asks to `show-the-board`. A board pose from such a view is `board-pose-unavailable` |
 | The solver fails on a frame or a set | `sample-failed` or `solve-failed`; the session stays ready with its views and its camera, so the step can be tried again |
 | A look by automatic capture fails and the session survives it | Capture keeps watching and the error is recorded; after three failures in a row it stops and clears its guidance |
-| The solver's worker stops answering | The call fails after 120 s, or at once when the worker reports an error, and the next call starts a new worker |
+| The solver's worker stops answering, or its WebAssembly module aborts | The call fails after 120 s, or at once when the worker reports an error or the module aborts, and the next call starts a new worker |
+| Views are held back but fewer than two of them can be posed with the solved answer | By hand: `reprojection-too-high`, because the answer could not be checked. Automatic capture keeps collecting |
 | Sample or solve by hand while automatic capture is solving | A sample is refused until that solve ends. A solve waits for it and, unless it finished the session, solves as asked and reports its own result |
 | Solve from a set that was never tilted | `sample-poses-degenerate`; the session stays open for more samples |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
 | Resize mode, zoom, focus, or the camera changes before the solve | `capture-condition-mismatch`; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
 | Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added. A solve by hand checks the hold-out error as well as the fit error, as automatic capture does, once at least two views were held back |
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
-| Board pose measured on a frame of another size than the profile, or with resize mode, zoom, focus, or the camera changed from the settings the profile recorded | `calibration-not-applicable`; nothing is measured and the camera is released |
+| Board pose measured on a frame of another size than the profile, or with resize mode, zoom, focus, or the camera changed from the settings the profile recorded | `calibration-not-applicable`; nothing is measured and the camera is released. When Camera Source does not report settings at all, the pose is measured as before |
 | Board pose requested without a calibration, or with the board out of view | `not-calibrated` or `board-pose-unavailable` |
 | Solve succeeds | The camera lease is released immediately |
 | Project stop, project reload, runtime disposal | Every session is cancelled and every camera lease is released |
