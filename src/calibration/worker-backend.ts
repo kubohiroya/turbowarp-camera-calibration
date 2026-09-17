@@ -167,6 +167,10 @@ export class WorkerCalibrationBackend implements CalibrationBackendPort {
           const message = (event as Partial<ErrorEvent>).message;
           const detail = typeof message === 'string' && message ? `: ${message}` : '';
           reject(new WorkerUnavailableError(`The OpenCV worker stopped (${event.type})${detail}.`));
+          // Ended now, not when a call next notices. A worker that failed with
+          // nothing waiting on it would otherwise fail that next call too.
+          // Calls already waiting have been answered by the rejection above.
+          if (this.worker === worker) this.dispose();
         };
         worker.addEventListener('error', fail, {once: true});
         worker.addEventListener('messageerror', fail, {once: true});

@@ -21,6 +21,19 @@ class SilentWorker extends EventTarget {
   public start(): void {}
 }
 
+/** A worker that answers every call with zero, as a live one would. */
+class AnsweringWorker extends EventTarget {
+  public readonly terminate = vi.fn();
+  public postMessage(message: {id?: string}): void {
+    queueMicrotask(() => {
+      this.dispatchEvent(
+        new MessageEvent('message', {data: {id: message.id, type: 'RAW', value: 0}})
+      );
+    });
+  }
+  public start(): void {}
+}
+
 function setup(timeoutMs = 20) {
   const workers: SilentWorker[] = [];
   const backend = new WorkerCalibrationBackend({
@@ -64,5 +77,24 @@ describe('the worker the solver runs on', () => {
     backend.dispose();
     await expect(pending).rejects.toThrow(/was stopped/u);
     expect(workers[0]?.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('replaces a worker that failed while nothing was waiting, before the next call', async () => {
+    // Noticed only by the next call, the failure would fail that call too --
+    // and a failed look ends automatic capture if it keeps happening.
+    const workers: AnsweringWorker[] = [];
+    const backend = new WorkerCalibrationBackend({
+      createWorker: () => {
+        const worker = new AnsweringWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      timeoutMs: 60_000
+    });
+    await expect(backend.validate([], BOARD, SOLUTION)).resolves.toBe(0);
+    workers[0]?.dispatchEvent(new Event('error'));
+    expect(workers[0]?.terminate).toHaveBeenCalledOnce();
+    await expect(backend.validate([], BOARD, SOLUTION)).resolves.toBe(0);
+    expect(workers).toHaveLength(2);
   });
 });

@@ -156,3 +156,45 @@ describe('a view that shows too little of the board to say how it was turned', (
     expect(weakestTiltDirection(edges, BOARD)).toBe('top-near');
   });
 });
+
+/** A board of any size seen through a pinhole, tilted by (gx, gy). */
+function boardView(board: CalibrationBoard, gx: number, gy: number): CalibrationSample {
+  const {columns, rows} = board;
+  const count = columns * rows;
+  return {
+    corners: Array.from({length: count}, (_, index) => {
+      const u = (index % columns) / (columns - 1) - 0.5;
+      const v = Math.floor(index / columns) / (rows - 1) - 0.5;
+      const depth = 1 + gx * u + gy * v;
+      return {x: 400 + (320 * u) / depth, y: 300 + (240 * v) / depth};
+    }),
+    ids: Array.from({length: count}, (_, index) => index),
+    quality: 0.8,
+    coverage: 0.25,
+    sharpness: 120
+  };
+}
+
+describe('a tilt read from part of the board', () => {
+  it('reads on the scale of the whole board', () => {
+    // Rows 2 and 3 of six are the two either side of the middle. Their steps
+    // differ far less than the halves' do, so unscaled the view read as
+    // nearly square on and diluted the spread.
+    const whole = measuredTilt(view(0, 0.2), BOARD).x!;
+    const middle = measuredTilt(rows(view(0, 0.2), 2, 3), BOARD).x!;
+    expect(Math.abs(whole)).toBeGreaterThan(0.1);
+    expect(middle / whole).toBeGreaterThan(0.85);
+    expect(middle / whole).toBeLessThan(1.15);
+  });
+
+  it('leaves the middle line of an odd count out of both halves', () => {
+    // Counted in one half, it makes the halves unequal, so turning the board
+    // one way reads differently from turning it the other. Left out, the two
+    // halves mirror each other and so do the readings.
+    const odd: CalibrationBoard = {...BOARD, columns: 7, rows: 5};
+    const forward = measuredTilt(boardView(odd, 0.3, 0.3), odd);
+    const back = measuredTilt(boardView(odd, -0.3, -0.3), odd);
+    expect(forward.x).toBeCloseTo(-back.x!, 10);
+    expect(forward.y).toBeCloseTo(-back.y!, 10);
+  });
+});
