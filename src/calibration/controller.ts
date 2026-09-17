@@ -39,10 +39,10 @@ import type {
 } from './contract.js';
 import {
   cornersSpanBoard,
+  measuredTilt,
   MINIMUM_POSE_SPREAD,
   poseSpread,
   tiltDistance,
-  tiltOf,
   weakestTiltDirection
 } from './pose.js';
 import {DICT_4X4_50} from '../board/aruco.js';
@@ -555,7 +555,7 @@ class CameraCalibration {
       this.guide(overfitted ? 'vary-more' : 'keep-going');
       return;
     }
-    await this.finishSolve(session, lease, solution);
+    await this.finishSolve(session, lease, solution, fitted.length);
   }
 
   public solve(): Promise<void> {
@@ -1042,11 +1042,17 @@ class CameraCalibration {
    */
   private noveltyOf(sample: CalibrationSample, session: CalibrationSession): number {
     if (this.samples.length === 0) return 1;
-    const tilt = tiltOf(sample, session.board);
+    const tilt = measuredTilt(sample, session.board);
+    // A view too little of the board shows to read a tilt from says nothing
+    // about how it was turned, and is not rewarded as if it did.
+    if (tilt.x === undefined && tilt.y === undefined) return 0;
     let nearest = Number.POSITIVE_INFINITY;
     for (const held of this.samples) {
-      nearest = Math.min(nearest, tiltDistance(tilt, tiltOf(held, session.board)));
+      const distance = tiltDistance(tilt, measuredTilt(held, session.board));
+      if (distance !== undefined) nearest = Math.min(nearest, distance);
     }
+    // Nothing held could be compared with it: as new as a first view.
+    if (nearest === Number.POSITIVE_INFINITY) return 1;
     return Math.max(0, Math.min(1, nearest / MINIMUM_POSE_SPREAD));
   }
 
@@ -1114,7 +1120,20 @@ class CameraCalibration {
         `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`
       );
     }
-    await this.finishSolve(session, lease, solution);
+    // The same bar the shutter sets. The fit error alone is met by an
+    // overfitted answer -- exactly when the set was too small or too alike --
+    // and a solve asked for by hand is not a reason to accept one.
+    if (
+      heldOut.length > 0 &&
+      (!Number.isFinite(this.holdoutError) ||
+        this.holdoutError > session.maximumReprojectionErrorPx)
+    ) {
+      this.reject(
+        'reprojection-too-high',
+        `Hold-out reprojection RMS ${this.holdoutError} px over ${heldOut.length} views the fit did not see exceeds ${session.maximumReprojectionErrorPx} px, while the fit itself reached ${this.reprojectionError} px. The views are too alike: vary the distance and the angle.`
+      );
+    }
+    await this.finishSolve(session, lease, solution, fitted.length);
   }
 
   /**
@@ -1129,7 +1148,8 @@ class CameraCalibration {
   private async finishSolve(
     session: CalibrationSession,
     lease: CameraLease,
-    solution: CalibrationSolveResult
+    solution: CalibrationSolveResult,
+    fittedCount: number
   ): Promise<void> {
     // Solved means usable on this camera. A profile that Camera Source would
     // judge not to fit the camera it was just solved on is not a result to
@@ -1168,7 +1188,10 @@ class CameraCalibration {
         intrinsicMatrix: solution.intrinsicMatrix,
         distortionModel: solution.distortionModel,
         distortionCoefficients: solution.distortionCoefficients,
-        quality: {sampleCount, reprojectionErrorPx: solution.reprojectionErrorPx},
+        // The views the error is measured over, which are the ones fitted: a
+        // count that included the held-out views would describe a fit that
+        // never saw them.
+        quality: {sampleCount: fittedCount, reprojectionErrorPx: solution.reprojectionErrorPx},
         ...(session.conditions
           ? {capture: session.conditions.capture, device: session.conditions.device}
           : {}),

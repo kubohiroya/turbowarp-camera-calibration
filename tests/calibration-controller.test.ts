@@ -278,6 +278,33 @@ describe('CameraCalibrationController', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it('refuses a solve by hand that does not hold up on the views it was not fitted to', async () => {
+    // The bar the automatic path already sets. The fit error alone is met by
+    // an overfitted answer, exactly when the set was too small or too alike.
+    const {controller, validate, release} = setup();
+    validate.mockResolvedValue(4);
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) await controller.addSample('camera-1');
+    await expect(controller.solve('camera-1')).rejects.toThrow(
+      /reprojection-too-high: Hold-out reprojection RMS 4 px over 2 views/u
+    );
+    expect(controller.state('camera-1')).toBe('ready');
+    expect(controller.profileJson('camera-1')).toBe('');
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('counts the views the fit used, not the ones held back, in the profile quality', async () => {
+    const {controller} = setup();
+    await controller.start(startOptions);
+    for (let index = 0; index < 12; index += 1) await controller.addSample('camera-1');
+    await controller.solve('camera-1');
+    const profile = JSON.parse(controller.profileJson('camera-1')) as {
+      quality: {sampleCount: number};
+    };
+    expect(profile.quality.sampleCount).toBe(10);
+    expect(controller.holdoutSampleCount('camera-1')).toBe(2);
+  });
+
   it('recognises the same view when it shows a different set of corners', async () => {
     // A ChArUco view need not show every corner, and the detector rarely finds
     // exactly the same ones twice. Compared by position in the array, one

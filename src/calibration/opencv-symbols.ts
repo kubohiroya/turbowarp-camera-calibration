@@ -27,7 +27,6 @@ export const REQUIRED_OPENCV_SYMBOLS = {
     'matFromImageData',
     'cvtColor',
     'Laplacian',
-    'meanStdDev',
     'matFromArray',
     'getPredefinedDictionary',
     'calibrateCameraExtended',

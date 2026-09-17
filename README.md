@@ -627,7 +627,7 @@ Returns the last measured board pose as JSON, or an empty string when none was m
 | Solve from a set that was never tilted | `sample-poses-degenerate`; the session stays open for more samples |
 | Resolution, device, or mirroring changes mid-session | `resolution-mismatch` or `capture-condition-mismatch` |
 | Resize mode, zoom, focus, or the camera changes before the solve | `capture-condition-mismatch`; the session ends in `error` rather than `solved`, because Camera Source would judge the profile not to fit this camera |
-| Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added |
+| Reprojection error exceeds the session limit | `reprojection-too-high`; no profile is stored and more samples can be added. A solve by hand checks the hold-out error as well as the fit error, as automatic capture does |
 | Profile belongs to another camera or another capture size | `calibration-not-applicable`, rejected before any state changes |
 | Board pose measured on a frame of another size than the profile | `calibration-not-applicable`; nothing is measured and the camera is released |
 | Board pose requested without a calibration, or with the board out of view | `not-calibrated` or `board-pose-unavailable` |

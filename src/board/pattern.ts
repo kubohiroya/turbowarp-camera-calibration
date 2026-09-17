@@ -65,10 +65,13 @@ export const BOARDS: readonly BoardSpec[] = [
 /**
  * Fits a board into a box with a blank margin around it.
  *
- * The margin is at least one square on every side. OpenCV's chessboard finder
- * needs the outer squares to be bounded by background it can trace; a board run
- * to the edge of the frame loses its outermost corners, and the pattern is
- * refused as incomplete rather than found with fewer points.
+ * The margin is at least one square on every side. Detection does not need
+ * it: every marker already sits in white inside its own square, and the
+ * markers name their corners, so a board run off the edge of the frame still
+ * gives the corners it shows. It stays because it is room to hold the sheet by
+ * without covering the outer squares, and because the square size -- which a
+ * board pose takes its scale from -- is derived from this layout: changing the
+ * margin would change the printed size of a board already in use.
  *
  * The box is the drawing's own coordinate space. Nothing here knows the size of
  * the screen it will end up on: the board is drawn once and scaled uniformly,

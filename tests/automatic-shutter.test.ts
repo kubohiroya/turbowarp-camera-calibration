@@ -366,11 +366,9 @@ describe('the automatic shutter', () => {
     expect(solve).toHaveBeenCalledOnce();
     const asked = controller.solve(CAMERA);
     open?.();
-    await asked;
-    // Asked for by hand, the fit error decides; the background solve alone
-    // would have left the session open.
+    await expect(asked).rejects.toThrow(/reprojection-too-high: Hold-out/u);
     expect(solve).toHaveBeenCalledTimes(2);
-    expect(controller.state(CAMERA)).toBe('solved');
+    expect(controller.state(CAMERA)).toBe('ready');
   });
 
   it('asks for more of the board when a view shows only one line of corners', async () => {
