@@ -34,12 +34,18 @@
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {chromium} from 'playwright';
-import {
-  BOARDS,
-  MARKER_RATIO,
-  patternSvg,
-  printedCellMillimetres
-} from '../lib/board/pattern.js';
+// Types from the source, values from the build.
+//
+// What is being checked is the drawing a consumer receives, which is the
+// emitted file -- so that is what is loaded. The specifier is built rather
+// than written, because a literal one would be resolved by `tsc --noEmit`,
+// which runs before anything is built.
+import type * as BoardModule from '../src/board/pattern.ts';
+
+const board = (await import(
+  new URL('../lib/board/pattern.js', import.meta.url).href
+)) as typeof BoardModule;
+const {BOARDS, MARKER_RATIO, patternSvg, printedCellMillimetres} = board;
 
 const openCv = await readFile(new URL('../vendor/opencv.js', import.meta.url));
 
