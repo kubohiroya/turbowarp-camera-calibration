@@ -2110,6 +2110,75 @@
   	return Math.hypot(from.x - to.x, from.y - to.y);
   }
   //#endregion
+  //#region src/board/aruco.ts
+  /**
+  * The marker patterns of OpenCV's `DICT_4X4_50`.
+  *
+  * Fifty markers of sixteen bits: a hundred bytes, which is why the board can be
+  * drawn in the page at all. The alternative was shipping OpenCV to the display
+  * side to ask it, and OpenCV is eleven megabytes.
+  *
+  * Extracted from `cv.getPredefinedDictionary(cv.DICT_4X4_50)` rather than
+  * transcribed, and checked against a board OpenCV drew itself: the first ten
+  * markers of a 10x7 board read back bit for bit. A dictionary is an arbitrary
+  * table, so a copy made any other way would be a copy nothing could check.
+  *
+  * Each entry is the 4x4 data grid, row-major, most significant bit at the top
+  * left, a set bit meaning white.
+  */
+  var DICT_4X4_50 = [
+  	46386,
+  	3994,
+  	13101,
+  	39238,
+  	21662,
+  	31181,
+  	40494,
+  	50418,
+  	65242,
+  	53078,
+  	63889,
+  	4519,
+  	3767,
+  	10767,
+  	9393,
+  	9790,
+  	18021,
+  	26112,
+  	27742,
+  	30383,
+  	34443,
+  	45099,
+  	52437,
+  	56706,
+  	65095,
+  	38001,
+  	44260,
+  	42324,
+  	8483,
+  	13423,
+  	17429,
+  	22450,
+  	40655,
+  	61643,
+  	2222,
+  	2345,
+  	6261,
+  	1279,
+  	3574,
+  	7258,
+  	5912,
+  	10792,
+  	12940,
+  	14514,
+  	9448,
+  	12011,
+  	11583,
+  	19300,
+  	20526,
+  	20499
+  ];
+  //#endregion
   //#region src/calibration/controller.ts
   /**
   * How long a just-acquired camera is given to produce its first frame.
@@ -2208,6 +2277,7 @@
   		this.guidanceCode = "";
   		this.noveltyNow = 0;
   		this.progressReached = 0;
+  		this.collected = 0;
   		this.solvedFrom = 0;
   	}
   	async start(options) {
@@ -2266,6 +2336,7 @@
   		};
   		this.lease = lease;
   		this.samples = [];
+  		this.collected = 0;
   		this.solvedFrom = 0;
   		this.progressReached = 0;
   		this.sessionSampleCount = 0;
@@ -2415,8 +2486,8 @@
   		return sampling;
   	}
   	startAutomaticSolve(operation) {
-  		if (this.samples.length === this.solvedFrom) return Promise.resolve();
-  		this.solvedFrom = this.samples.length;
+  		if (this.collected === this.solvedFrom) return Promise.resolve();
+  		this.solvedFrom = this.collected;
   		const solving = this.automaticSolve(operation).catch(() => {
   			if (this.calibrationState !== "error") this.guide("keep-going");
   		});
@@ -2509,7 +2580,12 @@
   	async measureBoardPose(options) {
   		const profile = this.profile;
   		if (!profile) this.refuse("not-calibrated", `Camera ${this.cameraId} has no calibration profile, so nothing can say where the board is.`);
-  		const board = normalizeBoard(options.board);
+  		let board;
+  		try {
+  			board = normalizeBoard(options.board);
+  		} catch (error) {
+  			this.refuse("invalid-board", error instanceof Error ? error.message : String(error));
+  		}
   		let lease;
   		try {
   			lease = await requireCameraSource(this.runtime).acquireCamera({
@@ -2521,6 +2597,7 @@
   		}
   		try {
   			const frame = requireVideoFrame(lease);
+  			if (frame.width !== profile.imageWidth || frame.height !== profile.imageHeight) this.refuse("calibration-not-applicable", `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${frame.width}x${frame.height}.`);
   			const pose = await (await this.resolveBackend()).measurePose({
   				element: frame.element,
   				width: frame.width,
@@ -2711,6 +2788,7 @@
   		}
   		if (automatic && this.samples.length >= MAXIMUM_SAMPLES) this.dropTheDullest(session);
   		this.samples.push(accepted);
+  		this.collected += 1;
   		this.sessionSampleCount = this.samples.length;
   		this.sampleQuality = accepted.quality;
   		this.calibrationState = "ready";
@@ -3060,6 +3138,8 @@
   	const rows = integerInRange(board.rows, 3, 20, "rows");
   	if (!Number.isFinite(board.squareSizeMeters) || board.squareSizeMeters <= 0 || board.squareSizeMeters > 1) throw new Error("square size must be within (0, 1] meter.");
   	if (!Number.isFinite(board.markerSizeMeters) || board.markerSizeMeters <= 0 || board.markerSizeMeters >= board.squareSizeMeters) throw new Error("marker size must be greater than zero and smaller than the square size.");
+  	const markers = boardMarkerCount(columns, rows);
+  	if (markers > DICT_4X4_50.length) throw new Error(`a ${columns}x${rows} board needs ${markers} markers, and DICT_4X4_50 has ${DICT_4X4_50.length}.`);
   	return {
   		columns,
   		rows,
@@ -3077,15 +3157,37 @@
   		maximumReprojectionErrorPx: options.maximumReprojectionErrorPx
   	};
   }
+  /** Markers on a board of `columns` by `rows` inner corners: one per light square. */
+  function boardMarkerCount(columns, rows) {
+  	return Math.floor((columns + 1) * (rows + 1) / 2);
+  }
+  /**
+  * How far the corners two views share moved, as a share of the image diagonal.
+  *
+  * Matched by id, not by position in the array. Two views of a ChArUco board
+  * rarely show the same corners, and one corner more or fewer shifts every
+  * position after it -- so comparing by position compares different corners,
+  * and a board that did not move reads as one that did.
+  *
+  * Views with no corner in common cannot be the same view.
+  */
   function normalizedCornerDistance(left, right, width, height) {
+  	const rightById = /* @__PURE__ */ new Map();
+  	right.ids.forEach((id, index) => {
+  		const corner = right.corners[index];
+  		if (corner) rightById.set(id, corner);
+  	});
   	let squared = 0;
-  	for (let index = 0; index < left.corners.length; index += 1) {
+  	let shared = 0;
+  	left.ids.forEach((id, index) => {
   		const a = left.corners[index];
-  		const b = right.corners[index];
-  		if (!a || !b) return Number.POSITIVE_INFINITY;
+  		const b = rightById.get(id);
+  		if (!a || !b) return;
   		squared += (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-  	}
-  	return Math.sqrt(squared / left.corners.length) / Math.hypot(width, height);
+  		shared += 1;
+  	});
+  	if (shared === 0) return Number.POSITIVE_INFINITY;
+  	return Math.sqrt(squared / shared) / Math.hypot(width, height);
   }
   function identifier(value, label) {
   	const text = value.trim();
