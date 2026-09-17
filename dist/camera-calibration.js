@@ -2071,22 +2071,66 @@
   		x: void 0,
   		y: void 0
   	};
-  	const acrossNear = [];
-  	const acrossFar = [];
-  	const downNear = [];
-  	const downFar = [];
+  	const across = new HalfSteps(rows);
+  	const down = new HalfSteps(columns);
   	for (const [id, corner] of at) {
   		const column = id % columns;
   		const row = Math.floor(id / columns);
   		const right = column + 1 < columns ? at.get(id + 1) : void 0;
-  		if (right) (row * 2 < rows - 1 ? acrossNear : acrossFar).push(distance(corner, right));
+  		if (right) across.add(row, distance(corner, right));
   		const below = row + 1 < rows ? at.get(id + columns) : void 0;
-  		if (below) (column * 2 < columns - 1 ? downNear : downFar).push(distance(corner, below));
+  		if (below) down.add(column, distance(corner, below));
   	}
   	return {
-  		x: logRatio(mean(acrossNear), mean(acrossFar)),
-  		y: logRatio(mean(downNear), mean(downFar))
+  		x: across.tilt(),
+  		y: down.tilt()
   	};
+  }
+  /**
+  * Grid steps split between the two halves of a board along one axis.
+  *
+  * The line in the middle of an odd count belongs to neither half. Put in one
+  * of them, it drags that half's mean towards the other's and shrinks the
+  * reading on a board that has one.
+  *
+  * The reading is scaled to the whole board. Under perspective the log ratio of
+  * two step lengths grows with how far apart on the board they were taken, so
+  * a view that shows only the two lines either side of the middle reads a small
+  * fraction of what the whole board would, turned the same way. Left like that,
+  * such views count as nearly square on and pull the spread down -- the fault
+  * that leaving an unreadable axis undefined was meant to remove. Divided by
+  * the separation the view actually had and multiplied by the whole board's,
+  * every view reads on the same scale.
+  */
+  var HalfSteps = class {
+  	constructor(count) {
+  		this.count = count;
+  		this.near = [];
+  		this.far = [];
+  		this.nearLines = 0;
+  		this.farLines = 0;
+  	}
+  	add(line, step) {
+  		const twice = line * 2;
+  		if (twice < this.count - 1) {
+  			this.near.push(step);
+  			this.nearLines += line;
+  		} else if (twice > this.count - 1) {
+  			this.far.push(step);
+  			this.farLines += line;
+  		}
+  	}
+  	tilt() {
+  		const ratio = logRatio(mean(this.near), mean(this.far));
+  		if (ratio === void 0) return void 0;
+  		const separation = this.farLines / this.far.length - this.nearLines / this.near.length;
+  		const whole = wholeSeparation(this.count);
+  		return separation > 0 ? ratio * whole / separation : ratio;
+  	}
+  };
+  /** How far apart the two halves of `count` lines are, as the mean line of each. */
+  function wholeSeparation(count) {
+  	return count - Math.floor(count / 2);
   }
   /**
   * How varied the collected tilts are: the RMS distance from their mean.
@@ -2272,6 +2316,24 @@
   * a fit that is weaker than the one the operator was promised.
   */
   var HOLDOUT_FRACTION = .2;
+  /**
+  * Held-out views needed before their error decides anything.
+  *
+  * One view is one pose's worth of corners, and a partial one may be six of
+  * them: its error is too noisy to refuse a calibration on. Below this the
+  * hold-out error is still reported, and nothing is decided by it.
+  */
+  var MINIMUM_HOLDOUT_VIEWS = 2;
+  /**
+  * Looks in a row that may fail before the automatic shutter stops.
+  *
+  * A failure the session survives -- the solver could not read one frame, its
+  * worker was restarted -- is not a reason to stop watching; stopping on the
+  * first would leave the operator holding a board in front of a shutter that
+  * has quietly given up. One that keeps happening is not transient, and a
+  * shutter retrying it four times a second would only repeat the error.
+  */
+  var AUTOMATIC_FAILURE_LIMIT = 3;
   /** Codes a profile validation can produce, and therefore can clear. */
   var PROFILE_ERROR_CODES = /* @__PURE__ */ new Set([
   	"invalid-calibration",
@@ -2313,6 +2375,7 @@
   		this.progressReached = 0;
   		this.collected = 0;
   		this.solvedFrom = 0;
+  		this.automaticFailures = 0;
   	}
   	async start(options) {
   		let normalized;
@@ -2408,6 +2471,7 @@
   		if (this.automatic) return;
   		if (!this.session || !this.lease) return;
   		this.automatic = true;
+  		this.automaticFailures = 0;
   		this.guide("keep-going");
   		this.scheduleTick(this.operation);
   	}
@@ -2502,9 +2566,14 @@
   		if (!this.sampling && !this.solving && this.lease && this.calibrationState === "ready") {
   			try {
   				await this.track(this.captureSample(operation, true));
+  				this.automaticFailures = 0;
   			} catch {
-  				this.stopAutomatic();
-  				return;
+  				this.automaticFailures += 1;
+  				if (!(operation === this.operation && this.lease !== void 0 && this.calibrationState === "ready") || this.automaticFailures >= AUTOMATIC_FAILURE_LIMIT) {
+  					this.stopAutomatic();
+  					this.guide("");
+  					return;
+  				}
   			}
   			if (this.automatic && !this.solving && this.guidanceCode === "solving") this.startAutomaticSolve(operation);
   		}
@@ -2556,17 +2625,21 @@
   		this.reprojectionError = solution.reprojectionErrorPx;
   		this.holdoutError = holdoutError;
   		this.holdoutCount = heldOut.length;
-  		if (!(this.holdoutCount > 0 && Number.isFinite(this.reprojectionError) && Number.isFinite(this.holdoutError) && this.reprojectionError <= session.maximumReprojectionErrorPx && this.holdoutError <= session.maximumReprojectionErrorPx)) {
-  			const overfitted = this.holdoutCount > 0 && Number.isFinite(this.reprojectionError) && this.reprojectionError <= session.maximumReprojectionErrorPx;
+  		if (!(this.holdoutCount >= MINIMUM_HOLDOUT_VIEWS && Number.isFinite(this.reprojectionError) && Number.isFinite(this.holdoutError) && this.reprojectionError <= session.maximumReprojectionErrorPx && this.holdoutError <= session.maximumReprojectionErrorPx)) {
+  			const overfitted = this.holdoutCount >= MINIMUM_HOLDOUT_VIEWS && Number.isFinite(this.reprojectionError) && this.reprojectionError <= session.maximumReprojectionErrorPx;
   			this.guide(overfitted ? "vary-more" : "keep-going");
   			return;
   		}
-  		await this.finishSolve(session, lease, solution, fitted.length);
+  		await this.finishSolve(session, lease, solution, fitted.length, true);
   	}
   	solve() {
   		if (this.solving) {
   			if (!this.solvingAutomatically) return this.solving;
-  			return this.solving.then(() => this.calibrationState === "solved" ? void 0 : this.solve());
+  			return this.solving.then(() => {
+  				if (this.calibrationState === "solved") return void 0;
+  				if (this.calibrationState === "error") throw new Error(this.calibrationErrorMessage);
+  				return this.solve();
+  			});
   		}
   		if (!this.session || !this.lease || this.calibrationState !== "ready") throw new Error(`Camera ${this.cameraId} calibration is not ready to solve.`);
   		if (this.samples.length < MINIMUM_SAMPLES) this.reject("sample-insufficient", `At least ${MINIMUM_SAMPLES} accepted samples are required.`);
@@ -2639,6 +2712,13 @@
   		try {
   			const frame = requireVideoFrame(lease);
   			if (frame.width !== profile.imageWidth || frame.height !== profile.imageHeight) this.refuse("calibration-not-applicable", `The profile calibrates ${profile.imageWidth}x${profile.imageHeight}, but camera ${this.cameraId} is capturing ${frame.width}x${frame.height}.`);
+  			if (profile.capture) {
+  				const drift = conditionsDrift({
+  					capture: profile.capture,
+  					device: profile.device ?? {}
+  				}, captureConditionsOf(this.runtime, this.cameraId));
+  				if (drift !== void 0) this.refuse("calibration-not-applicable", `The camera settings differ from the ones the profile was calibrated under (${drift}).`);
+  			}
   			const pose = await (await this.resolveBackend()).measurePose({
   				element: frame.element,
   				width: frame.width,
@@ -2942,8 +3022,8 @@
   			this.calibrationState = "ready";
   			this.reject("reprojection-too-high", `Reprojection RMS ${this.reprojectionError} px exceeds ${session.maximumReprojectionErrorPx} px.`);
   		}
-  		if (heldOut.length > 0 && (!Number.isFinite(this.holdoutError) || this.holdoutError > session.maximumReprojectionErrorPx)) this.reject("reprojection-too-high", `Hold-out reprojection RMS ${this.holdoutError} px over ${heldOut.length} views the fit did not see exceeds ${session.maximumReprojectionErrorPx} px, while the fit itself reached ${this.reprojectionError} px. The views are too alike: vary the distance and the angle.`);
-  		await this.finishSolve(session, lease, solution, fitted.length);
+  		if (heldOut.length >= MINIMUM_HOLDOUT_VIEWS && (!Number.isFinite(this.holdoutError) || this.holdoutError > session.maximumReprojectionErrorPx)) this.reject("reprojection-too-high", `Hold-out reprojection RMS ${this.holdoutError} px over ${heldOut.length} views the fit did not see exceeds ${session.maximumReprojectionErrorPx} px, while the fit itself reached ${this.reprojectionError} px. The views are too alike: vary the distance and the angle.`);
+  		await this.finishSolve(session, lease, solution, fitted.length, false);
   	}
   	/**
   	* Adopts a solution as the answer and gives the camera back.
@@ -2954,7 +3034,7 @@
   	* and a released lease -- or a session's outcome would depend on who ended
   	* it.
   	*/
-  	async finishSolve(session, lease, solution, fittedCount) {
+  	async finishSolve(session, lease, solution, fittedCount, automatic) {
   		if (session.conditions) {
   			const drift = conditionsDrift(session.conditions, captureConditionsOf(this.runtime, this.cameraId));
   			if (drift !== void 0) {
@@ -2989,6 +3069,7 @@
   				calibratedAt: new Date(this.nowMilliseconds()).toISOString()
   			});
   		} catch (error) {
+  			if (automatic) throw error;
   			this.rejectWith("invalid-calibration", error);
   		}
   		this.stopAutomatic();
@@ -3668,6 +3749,7 @@
   					const message = event.message;
   					const detail = typeof message === "string" && message ? `: ${message}` : "";
   					reject(new WorkerUnavailableError(`The OpenCV worker stopped (${event.type})${detail}.`));
+  					if (this.worker === worker) this.dispose();
   				};
   				worker.addEventListener("error", fail, { once: true });
   				worker.addEventListener("messageerror", fail, { once: true });
