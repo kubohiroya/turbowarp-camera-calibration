@@ -7,6 +7,7 @@ import type {
   CalibrationBoard,
   CalibrationCorner,
   CalibrationPixels,
+  CalibrationDetection,
   CalibrationSample,
   CalibrationSolveResult
 } from './types.js';
@@ -55,7 +56,22 @@ interface CvCharucoBoard {
 }
 
 interface CvCharucoDetector {
-  detectBoard(image: CvMat, corners: CvMat, ids: CvMat): void;
+  /**
+   * The markers are optional to OpenCV and not optional here.
+   *
+   * Without them, a frame holding one of the other boards is indistinguishable
+   * from an empty one: both produce no corners. The detector finds the markers
+   * on its way to the corners either way, so asking for them costs nothing and
+   * is the difference between telling the operator to show the board and
+   * telling them they are showing the wrong one.
+   */
+  detectBoard(
+    image: CvMat,
+    corners: CvMat,
+    ids: CvMat,
+    markerCorners?: CvMatVector,
+    markerIds?: CvMat
+  ): void;
   delete(): void;
 }
 
@@ -213,7 +229,7 @@ export class OpenCvChessboardCalibration {
   public async captureSample(
     frame: CalibrationPixels,
     board: CalibrationBoard
-  ): Promise<CalibrationSample | undefined> {
+  ): Promise<CalibrationDetection> {
     const cv = await this.ready;
     // Pixels, not an element. cv.imread reaches for document and
     // HTMLImageElement, neither of which exists where this now runs; the frame
@@ -222,17 +238,24 @@ export class OpenCvChessboardCalibration {
     const gray = new cv.Mat();
     const corners = new cv.Mat();
     const ids = new cv.Mat();
+    // Asked for alongside the board, not in a second pass: the detector finds
+    // the markers first anyway, and this is the same work reported instead of
+    // discarded.
+    const markerCorners = new cv.MatVector();
+    const markerIds = new cv.Mat();
     const laplacian = new cv.Mat();
     const mean = new cv.Mat();
     const standardDeviation = new cv.Mat();
     try {
       cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
       const detector = this.detectorFor(cv, board);
-      detector.detectBoard(gray, corners, ids);
-      // No corners at all is a board that is not in frame. A few is a board
+      detector.detectBoard(gray, corners, ids, markerCorners, markerIds);
+      const markersSeen = markerIds.rows;
+      // No corners at all is a board that is not in frame -- or one of the
+      // other boards, which is why the markers are counted. A few is a board
       // mostly out of frame, and those are kept: the corners near the edge of
       // the image are the ones that pin down the principal point.
-      if (ids.rows < MINIMUM_CORNERS) return undefined;
+      if (ids.rows < MINIMUM_CORNERS) return {markersSeen};
       const points = readPointPairs(corners.data32F);
       const identifiers: number[] = Array.from(ids.data32S);
       cv.Laplacian(gray, laplacian, cv.CV_64F);
@@ -245,11 +268,16 @@ export class OpenCvChessboardCalibration {
           0.3 * Math.min(1, sharpness / 100) +
           0.2 * completeness
       );
-      return {corners: points, ids: identifiers, quality, coverage, sharpness};
+      return {
+        sample: {corners: points, ids: identifiers, quality, coverage, sharpness},
+        markersSeen
+      };
     } finally {
       standardDeviation.delete();
       mean.delete();
       laplacian.delete();
+      markerIds.delete();
+      markerCorners.delete();
       ids.delete();
       corners.delete();
       gray.delete();

@@ -69,6 +69,29 @@ export interface CalibrationSample {
 }
 
 /**
+ * What one look at a frame found.
+ *
+ * `markersSeen` is reported whether or not a sample came out of it, because
+ * the two absences are different things to an operator. No markers is an empty
+ * frame: show the board. Markers without a usable board is a board the
+ * detector was not built for -- another of the three, most likely -- or the
+ * right one at an angle nothing can be read from. Telling both of those to
+ * "show the board" tells someone holding one that the camera is broken.
+ */
+export interface CalibrationDetection {
+  /**
+   * The view, when the board was found well enough to keep.
+   *
+   * Written `| undefined` rather than left optional so a caller can build the
+   * absent case by assigning it, which is what a detector reporting nothing
+   * naturally does.
+   */
+  readonly sample?: CalibrationSample | undefined;
+  /** ArUco markers found in the frame, whether or not they formed this board. */
+  readonly markersSeen: number;
+}
+
+/**
  * Distortion models this extension can produce and validate, named after the
  * OpenCV coefficient layouts. The coefficient count identifies the model.
  */
@@ -151,7 +174,7 @@ export interface CalibrationBackendPort {
   captureSample(
     frame: CalibrationFrame,
     board: CalibrationBoard
-  ): Promise<CalibrationSample | undefined>;
+  ): Promise<CalibrationDetection>;
   solve(
     samples: readonly CalibrationSample[],
     board: CalibrationBoard,

@@ -29,6 +29,7 @@ export type CalibrationErrorCode =
   | 'resolution-mismatch'
   | 'capture-condition-mismatch'
   | 'board-not-found'
+  | 'wrong-board'
   | 'sample-low-quality'
   | 'sample-too-similar'
   | 'sample-limit'
@@ -60,6 +61,14 @@ export type CalibrationGuidance =
   | ''
   /** Nothing recognisable in the frame. */
   | 'show-the-board'
+  /**
+   * Markers are in frame, and they do not make the board being calibrated.
+   *
+   * Almost always one of the other boards. It can also be the right board at
+   * an angle nothing can be read from, which is why this says what was seen
+   * rather than accusing the operator of holding the wrong thing.
+   */
+  | 'wrong-board'
   /** Found, but blurred or too small to trust the corners of. */
   | 'hold-steadier'
   /** A view too close to one already collected to add anything. */

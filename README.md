@@ -102,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.8.1
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.8.2
 ```
 
 Load the standalone bundle from:
@@ -114,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.8.1/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.8.2/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -240,7 +240,7 @@ Reports whether the shutter is watching that camera on its own. It stops by itse
 
 ### `camera calibration guidance [CAMERA_ID]`
 
-Returns what the operator should do next while automatic capture runs: show-the-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions.
+Returns what the operator should do next while automatic capture runs: show-the-board, wrong-board, hold-steadier, move-or-tilt, tilt-more, keep-going, solving, limit-reached, or complete. Empty when the shutter is not watching. This is not an error: most frames are declined, because most of the time the board is between two useful positions. wrong-board means markers are in frame that do not make the board being calibrated -- almost always one of the other boards.
 
 | Property | Value |
 |---|---|
@@ -416,7 +416,7 @@ Returns how many samples were held back from the solve. Zero means nothing was v
 
 ### `camera [CAMERA_ID] calibration error code`
 
-Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string.
+Returns a stable code for dependency, board, camera, sample, solve, reprojection, profile, or publication errors, or an empty string. wrong-board means markers were in frame that do not make the board being calibrated.
 
 | Property | Value |
 |---|---|

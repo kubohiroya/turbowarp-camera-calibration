@@ -85,6 +85,8 @@ function manualScheduler() {
 interface Options {
   /** What the detector finds, by frame number. Undefined means nothing found. */
   readonly detect?: (index: number) => CalibrationSample | undefined;
+  /** Markers reported when no board came out of the frame. */
+  readonly markersSeen?: number;
   readonly holdoutError?: number;
   readonly reprojectionErrorPx?: number;
 }
@@ -102,7 +104,12 @@ function setup(options: Options = {}) {
   const lease: CameraLease = {getFrameSource: vi.fn(() => frame), release};
   let frameIndex = 0;
   const detect = options.detect ?? ((index: number) => sample(index));
-  const captureSample = vi.fn(async () => detect(frameIndex++));
+  const captureSample = vi.fn(async () => {
+    const sample = detect(frameIndex++);
+    // Markers only when a board came out of it, unless a test says otherwise:
+    // these fixtures stand for an empty frame, not for another board.
+    return {sample, markersSeen: sample ? 35 : (options.markersSeen ?? 0)};
+  });
   const solve = vi.fn(
     async (): Promise<CalibrationSolveResult> => ({
       intrinsicMatrix: [700, 0, 400, 0, 700, 300, 0, 0, 1],
@@ -182,6 +189,25 @@ describe('the automatic shutter', () => {
     const {controller, clock} = await started();
     await clock.run(2);
     expect(controller.state(CAMERA)).toBe('ready');
+  });
+
+  it('says the board is the wrong one, rather than asking for a board', async () => {
+    // All three boards draw markers from one dictionary numbered from zero, so
+    // holding the wrong sheet puts plenty of valid markers in frame and
+    // produces no corners at all -- the same nothing as an empty frame. Told
+    // to show the board while holding one, an operator has no reason to think
+    // anything but that the camera is broken.
+    const {controller, clock} = await started({detect: () => undefined, markersSeen: 24});
+    await clock.run(2);
+    expect(controller.guidance(CAMERA)).toBe('wrong-board');
+    expect(controller.errorCode(CAMERA)).toBe('');
+    expect(controller.sampleCount(CAMERA)).toBe(0);
+  });
+
+  it('still asks for a board when the frame holds nothing at all', async () => {
+    const {controller, clock} = await started({detect: () => undefined, markersSeen: 0});
+    await clock.run(2);
+    expect(controller.guidance(CAMERA)).toBe('show-the-board');
   });
 
   it('tells the operator to hold still when the view is found but poor', async () => {
@@ -273,5 +299,15 @@ describe('the automatic shutter', () => {
     await controller.start(startOptions);
     await expect(controller.addSample(CAMERA)).rejects.toThrowError(/board-not-found/u);
     expect(controller.errorCode(CAMERA)).toBe('board-not-found');
+  });
+
+  it('names the wrong board in the refusal a person asked for', async () => {
+    const {controller} = setup({detect: () => undefined, markersSeen: 24});
+    await controller.start(startOptions);
+    await expect(controller.addSample(CAMERA)).rejects.toThrowError(/wrong-board/u);
+    expect(controller.errorCode(CAMERA)).toBe('wrong-board');
+    // The board it was looking for, so the operator knows which sheet to find.
+    expect(controller.errorMessage(CAMERA)).toContain('9x6');
+    expect(controller.errorMessage(CAMERA)).toContain('24 markers');
   });
 });

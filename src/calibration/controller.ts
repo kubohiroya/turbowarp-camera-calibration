@@ -34,6 +34,7 @@ import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
   CalibrationBoard,
+  CalibrationDetection,
   CalibrationSample,
   CalibrationSolveResult
 } from './types.js';
@@ -778,10 +779,10 @@ class CameraCalibration {
         `The capture conditions changed after the session started. Restart the calibration for camera ${this.cameraId}.`
       );
     }
-    let sample: CalibrationSample | undefined;
+    let detection: CalibrationDetection | undefined;
     try {
       const backend = await this.resolveBackend();
-      sample = await backend.captureSample(
+      detection = await backend.captureSample(
         {element: frame.element, width: frame.width, height: frame.height},
         session.board
       );
@@ -789,8 +790,21 @@ class CameraCalibration {
       this.fail('sample-failed', error);
     }
     if (operation !== this.operation) return;
+    const sample = detection.sample;
     if (!sample) {
-      if (automatic) return this.decline('show-the-board');
+      // Markers in frame that do not make this board is a different thing to
+      // say than an empty frame, and the operator can act on the difference:
+      // one of them means fetch the other sheet. Told to "show the board"
+      // while holding one, they have no reason to think anything but that the
+      // camera is broken.
+      const elsewhere = detection.markersSeen > 0;
+      if (automatic) return this.decline(elsewhere ? 'wrong-board' : 'show-the-board');
+      if (elsewhere) {
+        this.reject(
+          'wrong-board',
+          `${detection.markersSeen} markers are in frame and they do not make the ${session.board.columns}x${session.board.rows} board. Show that board, or start again with the one you are holding.`
+        );
+      }
       this.reject('board-not-found', 'The board was not found.');
     }
     // A view need not show the whole board. The markers name each corner, so a
