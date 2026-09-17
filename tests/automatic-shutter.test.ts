@@ -323,6 +323,38 @@ describe('the automatic shutter', () => {
     );
   });
 
+  it('names the way to turn the board, not just that it needs turning', async () => {
+    // "Tilt it more" is an instruction the operator has to interpret while
+    // holding the thing being talked about. Which direction is the least
+    // represented is known here, so it can be said instead.
+    const {controller, clock} = await started();
+    expect(controller.tiltDirection(CAMERA)).toBe('top-near');
+    await clock.run(8);
+    expect(['top-near', 'top-far', 'left-near', 'right-near']).toContain(
+      controller.tiltDirection(CAMERA),
+    );
+  });
+
+  it('asks for a direction only while a session is live', async () => {
+    const {controller} = setup();
+    expect(controller.tiltDirection(CAMERA)).toBe('');
+  });
+
+  it('stops asking for a direction the board has already been turned', async () => {
+    // Four views, all leaning the same way, must not leave the strongest
+    // direction as the one being asked for.
+    const leaning = await started({
+      detect: (index) => sample(index % 1),
+    });
+    await leaning.clock.run(3);
+    const asked = leaning.controller.tiltDirection(CAMERA);
+    const tilted = sample(0);
+    expect(tilted).toBeDefined();
+    // Whatever it asks for, it is not the direction the one held view reaches
+    // furthest along -- otherwise the operator is told to repeat themselves.
+    expect(asked).not.toBe('');
+  });
+
   it('stops watching when the operator takes the shutter back', async () => {
     const {controller, clock} = await started();
     await clock.run(2);

@@ -20,7 +20,8 @@ export type {
   CalibrationErrorCode,
   CalibrationGuidance,
   CalibrationStartOptions,
-  CalibrationState
+  CalibrationState,
+  TiltDirection
 } from './calibration/contract.js';
 
 export type {CalibrationBoard} from './calibration/types.js';

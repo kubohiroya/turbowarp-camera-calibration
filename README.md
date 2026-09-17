@@ -258,6 +258,16 @@ Returns how much the view automatic capture is looking at would add, from 0 to 1
 | Opcode | `cameraCalibrationNovelty` |
 | `CAMERA_ID` | String, default: `default` |
 
+### `camera calibration tilt direction [CAMERA_ID]`
+
+Returns which way the board still has to be turned: top-near, top-far, left-near, right-near, or empty outside a live session. The direction least represented in what has been collected, so that "tilt it more" -- an instruction the operator has to interpret -- becomes one they can carry out.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationTiltDirection` |
+| `CAMERA_ID` | String, default: `default` |
+
 ### `solve calibration for camera [CAMERA_ID]`
 
 Solves the intrinsic matrix and distortion coefficients from at least eight accepted samples, then releases the camera lease. No external pose is produced.

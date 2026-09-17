@@ -1,3 +1,4 @@
+import type {TiltDirection} from './contract.js';
 import type {CalibrationBoard, CalibrationCorner, CalibrationSample} from './types.js';
 
 /**
@@ -32,6 +33,48 @@ export interface Tilt {
 }
 
 export const NO_TILT: Tilt = Object.freeze({x: 0, y: 0});
+
+/**
+ * Which way the board still has to be turned.
+ *
+ * `x` is the upper half's grid steps against the lower half's, so a positive
+ * `x` is a board whose top is nearer the camera. `y` is the left half against
+ * the right, so a positive `y` is a board whose left edge is nearer. The names
+ * are in the contract; the signs they correspond to are here.
+ */
+/**
+ * The direction least represented in what has been collected.
+ *
+ * Each direction is scored by the furthest any held view reaches along it, and
+ * the weakest wins. Asking for the weakest rather than simply "more tilt"
+ * turns an instruction the operator has to interpret into one they can carry
+ * out, and it spreads the set on purpose rather than by luck.
+ *
+ * Nothing collected asks for the first direction rather than nothing at all:
+ * an operator holding a board square-on has to be told to start somewhere.
+ */
+export function weakestTiltDirection(
+  samples: readonly CalibrationSample[],
+  board: CalibrationBoard
+): TiltDirection {
+  const tilts = samples.map((sample) => tiltOf(sample, board));
+  const reach: ReadonlyArray<readonly [TiltDirection, (tilt: Tilt) => number]> = [
+    ['top-near', (tilt) => tilt.x],
+    ['top-far', (tilt) => -tilt.x],
+    ['left-near', (tilt) => tilt.y],
+    ['right-near', (tilt) => -tilt.y]
+  ];
+  let weakest: TiltDirection = 'top-near';
+  let smallest = Number.POSITIVE_INFINITY;
+  for (const [direction, along] of reach) {
+    const furthest = tilts.reduce((best, tilt) => Math.max(best, along(tilt)), 0);
+    if (furthest < smallest) {
+      smallest = furthest;
+      weakest = direction;
+    }
+  }
+  return weakest;
+}
 
 /**
  * The minimum spread of tilts a solve is allowed to proceed from.

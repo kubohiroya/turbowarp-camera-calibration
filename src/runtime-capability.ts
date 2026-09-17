@@ -17,7 +17,8 @@ import type {
   CalibrationErrorCode,
   CalibrationGuidance,
   CalibrationStartOptions,
-  CalibrationState
+  CalibrationState,
+  TiltDirection
 } from './calibration/contract.js';
 
 export const runtimeCapabilityKey = 'kubohiroyaCameraCalibrationCapability';
@@ -71,6 +72,15 @@ export interface CameraCalibrationCapabilityV1 {
    * the operator is holding the board and not reading the screen.
    */
   novelty(cameraId: string): number;
+  /**
+   * Which way the board still has to be turned. Since v3.
+   *
+   * `top-near`, `top-far`, `left-near`, `right-near`, or empty outside a live
+   * session. The direction least represented in what has been collected, so
+   * that "tilt it more" -- an instruction the operator has to interpret --
+   * becomes one they can carry out.
+   */
+  tiltDirection(cameraId: string): TiltDirection;
   /** Solves from the accepted samples and releases the camera. */
   solve(cameraId: string): Promise<void>;
   /** Hands the solved profile to Camera Source, which owns the profile contract. */
@@ -169,6 +179,7 @@ export function createRuntimeCapability(
     automatic: (cameraId) => host.automatic(cameraId),
     guidance: (cameraId) => host.guidance(cameraId),
     novelty: (cameraId) => host.novelty(cameraId),
+    tiltDirection: (cameraId) => host.tiltDirection(cameraId),
     solve: (cameraId) => host.solve(cameraId),
     publish: (cameraId) => host.publish(cameraId),
     cancel: (cameraId) => host.cancel(cameraId),

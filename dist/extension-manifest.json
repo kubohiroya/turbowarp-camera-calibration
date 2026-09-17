@@ -112,6 +112,16 @@
       ]
     },
     {
+      "opcode": "cameraCalibrationNovelty",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "CAMERA_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
       "opcode": "cameraCalibrationPoseSpread",
       "blockType": "REPORTER",
       "arguments": [

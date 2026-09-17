@@ -98,6 +98,20 @@ export type CalibrationGuidance =
   | 'complete';
 
 /**
+ * Which way the board still has to be turned.
+ *
+ * Two axes, one sign at a time. `top-near` and `top-far` turn it about the
+ * horizontal axis; `left-near` and `right-near` about the vertical one. That
+ * is as much as can be said without knowing where the operator is standing,
+ * and as much as they need, since they are looking at the same board.
+ *
+ * Here rather than beside the arithmetic that works it out, because the
+ * published entry carries declarations and nothing else: a consumer asking
+ * what the names mean must not pull in the measuring.
+ */
+export type TiltDirection = '' | 'top-near' | 'top-far' | 'left-near' | 'right-near';
+
+/**
  * Where the scale of a measured pose came from.
  *
  * Intrinsic calibration needs no real-world dimensions, and the operator is

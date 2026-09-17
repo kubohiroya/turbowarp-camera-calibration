@@ -20,16 +20,24 @@ export type {
   CalibrationErrorCode,
   CalibrationGuidance,
   CalibrationStartOptions,
-  CalibrationState
+  CalibrationState,
+  TiltDirection
 } from './contract.js';
 import type {
   BoardPoseOptions,
   CalibrationErrorCode,
   CalibrationGuidance,
   CalibrationStartOptions,
-  CalibrationState
+  CalibrationState,
+  TiltDirection
 } from './contract.js';
-import {MINIMUM_POSE_SPREAD, poseSpread, tiltDistance, tiltOf} from './pose.js';
+import {
+  MINIMUM_POSE_SPREAD,
+  poseSpread,
+  tiltDistance,
+  tiltOf,
+  weakestTiltDirection
+} from './pose.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -298,6 +306,12 @@ class CameraCalibration {
 
   public novelty(): number {
     return this.noveltyNow;
+  }
+
+  /** Which way to turn the board next. Empty outside a live session. */
+  public tiltDirection(): TiltDirection {
+    if (!this.session || !this.lease) return '';
+    return weakestTiltDirection(this.samples, this.session.board);
   }
 
   /**
@@ -1130,6 +1144,10 @@ export class CameraCalibrationController {
 
   public novelty(cameraId: string): number {
     return this.existing(cameraId)?.novelty() ?? 0;
+  }
+
+  public tiltDirection(cameraId: string): TiltDirection {
+    return this.existing(cameraId)?.tiltDirection() ?? '';
   }
 
   public cancel(cameraId: string): Promise<void> {
