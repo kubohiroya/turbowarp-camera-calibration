@@ -290,6 +290,39 @@ describe('the automatic shutter', () => {
     expect(controller.holdoutSampleCount(CAMERA)).toBeGreaterThan(0);
   });
 
+  it('rates the view being looked at by how much it would add', async () => {
+    // For something continuous the operator can hear while holding the board.
+    // Deliberately tilt, not corner position: sliding the board moves every
+    // corner and adds nothing a solve can use, so a signal driven by corner
+    // distance would be loudest for the one motion that does not work.
+    const {controller, clock} = await started();
+    // Nothing collected yet: the first view is the most useful one there is.
+    await clock.run(1);
+    expect(controller.novelty(CAMERA)).toBeGreaterThan(0);
+    await clock.run(6);
+    expect(controller.novelty(CAMERA)).toBeLessThanOrEqual(1);
+  });
+
+  it('rates a frame with nothing in it at nothing', async () => {
+    const {controller, clock} = await started({detect: () => undefined});
+    await clock.run(2);
+    expect(controller.novelty(CAMERA)).toBe(0);
+  });
+
+  it('rates a slid board below a tilted one', async () => {
+    // The distinction the whole measure exists for.
+    const slid = await started({
+      detect: (index) => sample(index, false),
+      markersSeen: 35,
+    });
+    await slid.clock.run(6);
+    const tilted = await started();
+    await tilted.clock.run(6);
+    expect(slid.controller.novelty(CAMERA)).toBeLessThan(
+      tilted.controller.novelty(CAMERA),
+    );
+  });
+
   it('stops watching when the operator takes the shutter back', async () => {
     const {controller, clock} = await started();
     await clock.run(2);

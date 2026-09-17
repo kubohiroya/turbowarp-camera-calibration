@@ -102,7 +102,7 @@ therefore about 11 MB.
 Install an exact version that you have reviewed:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.8.2
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.9.0
 ```
 
 Load the standalone bundle from:
@@ -114,7 +114,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 A version-pinned CDN URL is:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.8.2/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.9.0/dist/camera-calibration.js
 ```
 
 ## Quick start
@@ -246,6 +246,16 @@ Returns what the operator should do next while automatic capture runs: show-the-
 |---|---|
 | Type | Reporter |
 | Opcode | `cameraCalibrationGuidance` |
+| `CAMERA_ID` | String, default: `default` |
+
+### `camera calibration novelty [CAMERA_ID]`
+
+Returns how much the view automatic capture is looking at would add, from 0 to 1. One is a view turned as far from every retained view as the whole set is required to spread; zero means nothing usable is in frame. Measured in tilt, not in where the corners landed: sliding the board moves every corner and adds nothing a solve can use. Meant to drive something continuous -- a tone, a bar, a click rate -- because the operator is holding the board and not reading the screen.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `cameraCalibrationNovelty` |
 | `CAMERA_ID` | String, default: `default` |
 
 ### `solve calibration for camera [CAMERA_ID]`

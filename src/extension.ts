@@ -125,6 +125,10 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     return this.controller.guidance(normalizeId(args.CAMERA_ID));
   }
 
+  public cameraCalibrationNovelty(args: {CAMERA_ID: unknown}): number {
+    return this.controller.novelty(normalizeId(args.CAMERA_ID));
+  }
+
   public async solveCameraCalibration(args: {CAMERA_ID: unknown}): Promise<void> {
     await this.controller.solve(normalizeId(args.CAMERA_ID));
   }
@@ -262,6 +266,7 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
         this.controller.setAutomatic(normalizeId(cameraId), enabled),
       automatic: (cameraId) => this.controller.automatic(normalizeId(cameraId)),
       guidance: (cameraId) => this.controller.guidance(normalizeId(cameraId)),
+      novelty: (cameraId) => this.controller.novelty(normalizeId(cameraId)),
       solve: (cameraId) => this.controller.solve(normalizeId(cameraId)),
       publish: (cameraId) => this.controller.publishProfile(normalizeId(cameraId)),
       cancel: (cameraId) => this.controller.cancel(normalizeId(cameraId)),

@@ -29,7 +29,7 @@ import type {
   CalibrationStartOptions,
   CalibrationState
 } from './contract.js';
-import {MINIMUM_POSE_SPREAD, poseSpread} from './pose.js';
+import {MINIMUM_POSE_SPREAD, poseSpread, tiltDistance, tiltOf} from './pose.js';
 import type {
   CalibrationBackendFactory,
   CalibrationBackendPort,
@@ -167,6 +167,8 @@ class CameraCalibration {
   private automatic = false;
   private cancelTick: (() => void) | undefined;
   private guidanceCode: CalibrationGuidance = '';
+  /** How much the view the shutter last looked at would add. */
+  private noveltyNow = 0;
   /** Sample count the last automatic solve was started from. */
   private solvedFrom = 0;
 
@@ -294,6 +296,10 @@ class CameraCalibration {
     return this.guidanceCode;
   }
 
+  public novelty(): number {
+    return this.noveltyNow;
+  }
+
   /**
    * Waits for the camera to hand over a frame with a size on it.
    *
@@ -340,6 +346,7 @@ class CameraCalibration {
 
   private stopAutomatic(): void {
     this.automatic = false;
+    this.noveltyNow = 0;
     this.cancelTick?.();
     this.cancelTick = undefined;
   }
@@ -808,6 +815,7 @@ class CameraCalibration {
       // one of them means fetch the other sheet. Told to "show the board"
       // while holding one, they have no reason to think anything but that the
       // camera is broken.
+      this.noveltyNow = 0;
       const elsewhere = detection.markersSeen > 0;
       if (automatic) return this.decline(elsewhere ? 'wrong-board' : 'show-the-board');
       if (elsewhere) {
@@ -831,6 +839,7 @@ class CameraCalibration {
       this.reject('sample-low-quality', `Sample quality must be at least ${MINIMUM_SAMPLE_QUALITY}.`);
     }
     const accepted = sample;
+    this.noveltyNow = this.noveltyOf(accepted, session);
     if (
       this.samples.some(
         (previous) =>
@@ -884,6 +893,30 @@ class CameraCalibration {
       }
     }
     this.samples.splice(dullest, 1);
+  }
+
+  /**
+   * How much the view being looked at would add, from 0 to 1.
+   *
+   * Measured in tilt, not in where the corners landed. The corner distance is
+   * what decides whether a view is a duplicate, and it is deliberately not
+   * this: sliding the board across the frame moves every corner a long way and
+   * adds nothing a solve can use, so a signal driven by it would be loudest
+   * for the one motion that does not work. Tilt is what separates focal length
+   * from distance, so tilt is what this rewards.
+   *
+   * One is a view turned as far from everything held as the whole set is
+   * required to spread, which is a view worth stopping for. An empty set reads
+   * as one, because the first view is the most useful one there is.
+   */
+  private noveltyOf(sample: CalibrationSample, session: CalibrationSession): number {
+    if (this.samples.length === 0) return 1;
+    const tilt = tiltOf(sample, session.board);
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const held of this.samples) {
+      nearest = Math.min(nearest, tiltDistance(tilt, tiltOf(held, session.board)));
+    }
+    return Math.max(0, Math.min(1, nearest / MINIMUM_POSE_SPREAD));
   }
 
   /** Records what the operator should do next, without disturbing the state. */
@@ -1093,6 +1126,10 @@ export class CameraCalibrationController {
 
   public guidance(cameraId: string): CalibrationGuidance {
     return this.existing(cameraId)?.guidance() ?? '';
+  }
+
+  public novelty(cameraId: string): number {
+    return this.existing(cameraId)?.novelty() ?? 0;
   }
 
   public cancel(cameraId: string): Promise<void> {

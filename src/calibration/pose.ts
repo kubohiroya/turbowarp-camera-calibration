@@ -43,6 +43,17 @@ export const NO_TILT: Tilt = Object.freeze({x: 0, y: 0});
  */
 export const MINIMUM_POSE_SPREAD = 0.08;
 
+/**
+ * How differently two views were turned.
+ *
+ * The distance the solve cares about. Two views taken from the same angle
+ * constrain the same thing however far apart on the board they were taken, so
+ * this ignores where the board was and reads only how it was turned.
+ */
+export function tiltDistance(left: Tilt, right: Tilt): number {
+  return Math.hypot(left.x - right.x, left.y - right.y);
+}
+
 export function tiltOf(sample: CalibrationSample, board: CalibrationBoard): Tilt {
   const {columns, rows} = board;
   const at = new Map<number, CalibrationCorner>();
