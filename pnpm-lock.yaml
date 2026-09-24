@@ -18,6 +18,9 @@ importers:
       '@kubohiroya/turbowarp-camera-source':
         specifier: 0.11.0
         version: 0.11.0
+      '@kubohiroya/turbowarp-extension-manifest':
+        specifier: 0.2.0
+        version: 0.2.0
       '@kubohiroya/vite-plugin-turbowarp-extension':
         specifier: 0.4.0
         version: 0.4.0(vite@8.3.0(@types/node@24.13.4))
@@ -119,6 +122,10 @@ packages:
   '@kubohiroya/turbowarp-camera-source@0.11.0':
     resolution: {integrity: sha512-bx91+Vy8109QwLAkM2yvLafrBUvH5C7FU74Ldn/msOL8eImC644g7/EwB9JPSSH4ZXafPKXFq1ADVMISXyCxuQ==}
     engines: {node: '>=22.18.0'}
+
+  '@kubohiroya/turbowarp-extension-manifest@0.2.0':
+    resolution: {integrity: sha512-FI2Ei2dSZjIGJWJTXZYnpIwzqVtlg8KRNcRZLdydDdV53I2Yri8Mz6susCuNjSm4awbRPBgNx4ALDawr8M90cw==}
+    engines: {node: '>=22'}
 
   '@kubohiroya/vite-plugin-turbowarp-extension@0.4.0':
     resolution: {integrity: sha512-8Uh4TA4pNhFkx/HFIT6gBZTgQY3Lv3LTDYRQN6oWtHHzoiK+Chn9LBtKeagBXDlQsCZC+8WcOGhCGSWHOhxXbw==}
@@ -988,6 +995,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   '@kubohiroya/turbowarp-camera-source@0.11.0': {}
+
+  '@kubohiroya/turbowarp-extension-manifest@0.2.0': {}
 
   '@kubohiroya/vite-plugin-turbowarp-extension@0.4.0(vite@8.3.0(@types/node@24.13.4))':
     dependencies:
