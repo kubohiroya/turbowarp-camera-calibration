@@ -17,6 +17,21 @@ export default defineConfig({
     extensionManifestPlugin({
       id: extensionConfig.id,
       definitions
-    })
+    }),
+    {
+      name: 'stable-module-region-comments',
+      enforce: 'post',
+      generateBundle(_options, bundle) {
+        for (const output of Object.values(bundle)) {
+          if (output.type === 'chunk') {
+            // Rolldown region comments contain machine-specific dependency paths.
+            output.code = output.code.replace(
+              /^[ \t]*\/\/#(?:end)?region\b[^\r\n]*(?:\r?\n|$)/gmu,
+              ''
+            );
+          }
+        }
+      }
+    }
   ]
 });

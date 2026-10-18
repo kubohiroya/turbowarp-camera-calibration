@@ -1,0 +1,91 @@
+{
+  "scope": "stage-2-stable-release",
+  "version": "0.15.0",
+  "previousVersion": "0.14.0",
+  "baseHead": "e46a2e7fc3d57182df3182d8974e928e23273780",
+  "issue": "https://github.com/kubohiroya/turbowarp-camera-calibration/issues/40",
+  "issueWrites": "not performed in this release; Ref only, no automatic close",
+  "dependencies": {
+    "@kubohiroya/turbowarp-extension-data-editor": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#76fa1d50a3c188082ceef723ea018a9d8769ea6e",
+    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#e11cc43ec35ff333bbefd50e8dcb461ee939c102"
+  },
+  "commonBuildInfo": {
+    "name": "@kubohiroya/turbowarp-extension-data-editor",
+    "version": "0.2.0",
+    "repository": "https://github.com/kubohiroya/turbowarp-extension-data-editor",
+    "revision": "76fa1d50a3c188082ceef723ea018a9d8769ea6e",
+    "sourceState": "archive",
+    "sourceSha256": "912efc0438710958698527aa5c26a33b0b1c2da280f91d36b048f6f2389a48f0",
+    "capabilities": {
+      "preparedSource": 1
+    }
+  },
+  "commonMainTarballSha256": "f51d14a502442336d6803009e3f6780fb03f7c3c51203287fed83073551a9194",
+  "commonMainTarballBuildInfo": {
+    "name": "@kubohiroya/turbowarp-extension-data-editor",
+    "version": "0.2.0",
+    "repository": "https://github.com/kubohiroya/turbowarp-extension-data-editor",
+    "revision": "76fa1d50a3c188082ceef723ea018a9d8769ea6e",
+    "sourceState": "commit",
+    "sourceSha256": "912efc0438710958698527aa5c26a33b0b1c2da280f91d36b048f6f2389a48f0",
+    "capabilities": {
+      "preparedSource": 1
+    }
+  },
+  "commonProvenance": "Git prepare archive and main pack commit identify the same revision/sourceSha256; provenance sourceState is intentionally distinguished",
+  "fastUri": "3.1.8 across direct/common-AJV and all lock nodes",
+  "reactDomTestPeer": "devDependency 18.3.1 exact; no production API/permission change",
+  "node": "22.23.3",
+  "packageManager": "pnpm@11.11.0",
+  "fullTests": 207,
+  "fullTestFiles": 17,
+  "generatedFiles": 24,
+  "generatedSha256": {
+    "dist/camera-calibration.js": "18c4fc0336f340e6e3c5684bd61442cc1ded3b5edbd557e4019f307ff2b8b7a8",
+    "dist/extension-manifest.json": "9fa7701b0c2e07331cc4ae21f8db50f6901ad2e90f79102cf5b938013b559882",
+    "lib-editor/schemas/camera-intrinsics-v1.schema.json": "7a53175d12a7ad1c7f4dec694e4dee83bb496c0213fcb699b0ee7eb1cd7132fb",
+    "lib-editor/schemas/editor-legacy-input.json": "70f3a1daf665fb995559e7494dacf8cfe70ab157cf93dc245e44a519d32f191c",
+    "lib-editor/src/editor-schema.d.ts": "1126160511db80eaa8fb6ffc37ed511e3b56b233b18762a456dd8a4c8851eead",
+    "lib-editor/src/editor-schema.js": "4821232491a811b8486ee4eb1276156f7d496b8dcef9ea444b514623e0d9bed5",
+    "lib-editor/src/calibration/profile.js": "4cfa77336be336bd3efd974d67aa8a943328383cbaa5b3b313c1655d7a047bca",
+    "lib-editor/src/calibration/distortion.js": "d3e36384ad0b6889610daedaf37cb19cc461ca9a3d76b8b7825135fd479fe655",
+    "lib-editor/src/calibration/distortion.d.ts": "03a7368fab61d628958d25a99180c990fa506257601678b07e275fcfddf5cf6e",
+    "lib-editor/src/calibration/profile.d.ts": "fe6952f815fa28c44d8b4d882107c1301d94bfa86013139bb3ad47ee83bf23a4",
+    "lib/runtime.d.ts": "06fce987510251eba4d68a73a342c72f150b76de2c5e8029d7d7976d6ae616ea",
+    "lib/runtime.js": "c5b43074ed12813838819e7fc09dabb5de6dd3363e9700f2e7a0367cb868ef9f",
+    "lib/runtime-capability.d.ts": "e8fc5f5186f5524395c5c8c136a59e22d2307207b246cbb8519b361f3dd7aeeb",
+    "lib/runtime-capability.js": "eac17bc77cbb31617b56a8be337c01d0badf0c9ba5837ed80b1ac5bf91ce3074",
+    "lib/board/pattern.js": "400e08e6300ec87afa10861bd0f3ea3e21c924834402b26936150a88f9646626",
+    "lib/board/aruco.d.ts": "9bac4d0203a3c03f00d7b92f0d53a98988163cd1195ef9e4421606dfc785cede",
+    "lib/board/aruco.js": "0ab8034c9f28e6c6a19653afa416fbb08f1808482987d9e18b890901a199b576",
+    "lib/board/pattern.d.ts": "de3674ed916f41cec5e57fd297000e70e2da7daba07d32e3f99bf0633b9cee06",
+    "lib/calibration/types.js": "034396c60933bf1a1f105168b56e42dff7275198bca7c19295813fc8bc6ee094",
+    "lib/calibration/types.d.ts": "bb34c03fb23d557f9362e701f440b297bf56eefd8ee7d1405da016e38ec448b2",
+    "lib/calibration/distortion.js": "d3e36384ad0b6889610daedaf37cb19cc461ca9a3d76b8b7825135fd479fe655",
+    "lib/calibration/contract.js": "e99dcea7614ebf1d222860f76b4d338ecfaa89e5627a40e5af19b067f822969a",
+    "lib/calibration/distortion.d.ts": "03a7368fab61d628958d25a99180c990fa506257601678b07e275fcfddf5cf6e",
+    "lib/calibration/contract.d.ts": "bc4dc56037acd35e2d0ac424a6f0366cabf9f793eb4aef0612042053e0b633ab"
+  },
+  "samePathTwoBuildsMatch": true,
+  "freshCrossPathBuildMatches": true,
+  "productionAudit": "0 vulnerabilities",
+  "historicalStage2Subset": {
+    "count": 659,
+    "note": "prior whole-cohort related cases; not added to current full suite",
+    "guiCases": 5,
+    "stepsPerCase": 8
+  },
+  "flags": {
+    "blockEditorSourceForms": false,
+    "blockEditorDialogsRequired": true
+  },
+  "postCommitChecks": "repository check-dist/docs Git guards run after commit; CI outcome recorded in PR and aggregate",
+  "publication": "user-authorized commit/push/PR/squash merge and npm release; npm publisher is coordinated separately",
+  "rollback": "flag OFF; reverse dependency revert package/lock/allowBuilds; retain published npm versions and publish fixes under new versions",
+  "dependencySecurityScope": {
+    "workspaceOverridesDoNotPropagateToNpmConsumers": true,
+    "ajvFastUriRequested": "^3.0.1",
+    "oldLockContextFixedTo": "3.1.8",
+    "mainNpmConsumerSmoke": "recorded separately after merge; no claim from workspace overrides alone"
+  }
+}
