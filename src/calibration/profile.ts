@@ -3,7 +3,7 @@ import {
   readProfileText,
   type CameraIntrinsicProfileV1 as CameraSourceProfile
 } from '@kubohiroya/turbowarp-camera-source/profile';
-import {DISTORTION_COEFFICIENT_COUNTS, type DistortionModel} from './types.js';
+import {DISTORTION_COEFFICIENT_COUNTS, type DistortionModel} from './distortion.js';
 
 /**
  * The intrinsic calibration profile.
@@ -199,7 +199,7 @@ function readCameraSourceProfileText(text: string): CameraIntrinsicsV1 {
 }
 
 /** The inverse of the conversion made on publishing to Camera Source. */
-function fromCameraSourceProfile(profile: CameraSourceProfile): CameraIntrinsicsV1 {
+export function fromCameraSourceProfile(profile: CameraSourceProfile): CameraIntrinsicsV1 {
   const {fx, fy, cx, cy, skew} = profile.intrinsics;
   const {model, coefficients} = profile.distortion;
   let distortionModel: DistortionModel;

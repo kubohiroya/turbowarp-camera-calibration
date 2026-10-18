@@ -1,0 +1,17 @@
+> 現在のCI修正・依存artifactの検証は [editor-schema-ci-fix-20261018.ja.md](editor-schema-ci-fix-20261018.ja.md) / [JSON](editor-schema-ci-fix-20261018.json) を参照。以下の旧pin・検証結果は採取時の履歴として保持する。
+
+# 段階1 修正版のGit依存固定
+
+2026-10-18。対象は既存https://github.com/kubohiroya/turbowarp-camera-calibration/issues/38の段階1修正と依存更新。公開ブランチはfeat/schema/stage1-camera-calibration。自repoの最終commit/remote照合はcoordinatorのstage-1-publication-20261018.jsonに記録し、文書へ自分のcommitを埋め込む循環を避ける。
+
+共通artifactをR4修正を含む `b5f4b8d2e391a0d57d091c8f3e1c2d58da152dc8` へ固定した。manifest・lock・allowBuildsの正確なGit URLを揃え、標準frozen installと実解決のbuild-info revisionを照合した。esbuild等の既存制限は維持する。producerを経由する共通依存も同じrevisionとRJSF宣言を確認した。
+
+実解決のRJSF型は既定nullで、共通作業成果とhash一致。pure 12ファイルのbyte一致、関連12テスト・型検査・既存prepare build、srcなし/Reactなしimport・globalアクセス0・strict no-DOM型検査、8 emitの再生成hash一致を確認した。RJSF互換型のskipLibCheck:trueは既知の依存宣言制約に限定し、pure consumerはfalse。実際の検証依存版もJSONへ記録した。
+
+再レビュー済みsource・Schema正本/生成物・既存データ・UI分類は変更していない。修正内容、raw形式保持、既存API、既定OFFフラグ、同期owner判定の境界も維持する。機械記録はeditor-schema-publication.json。旧editor-schema-verification.jsonと以前の本文は採取時点の履歴。
+
+ロールバックはJSONのrollback_dependency_pinsと対応lock/workspace policyへ戻すか、新pure/bundle入口の利用を停止する。保存sourceは移行しない。参照GUIは未更新であり、段階2のUI接続前に修正版artifactの選択・manifest/lock/実解決・capability・raw形式保持・保存直前再検証を確認する。段階2以降・PR・merge・npm公開は含めない。
+
+初回の間接Git解決は既存pnpm制限に対応し、承認済み固定producer/commonだけを確認して一時的に--config.block-exotic-subdeps=falseを使用した。その後は同引数なしの標準frozen installで再確認し、永続設定を緩めていない。
+
+追跡対象のdist/camera-calibration.jsもprepareの生成結果へ揃えた。差分は新しい依存キャッシュパスを示す6つのregionコメントだけで、それらの行を除いたbyte列は一致する。旧/新hashと照合結果をJSONへ記録した。

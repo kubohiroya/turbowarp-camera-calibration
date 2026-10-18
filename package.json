@@ -30,7 +30,11 @@
       "types": "./lib/runtime.d.ts",
       "default": "./lib/runtime.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./editor-schema": {
+      "types": "./lib-editor/src/editor-schema.d.ts",
+      "import": "./lib-editor/src/editor-schema.js"
+    }
   },
   "unpkg": "./dist/camera-calibration.js",
   "jsdelivr": "./dist/camera-calibration.js",
@@ -45,7 +49,8 @@
     "README.md",
     "README.ja.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "lib-editor/"
   ],
   "publishConfig": {
     "access": "public",
@@ -58,7 +63,7 @@
   "scripts": {
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
-    "build": "vite build && tsc -p tsconfig.lib.json",
+    "build": "vite build && tsc -p tsconfig.lib.json && npm run build:editor",
     "lint": "eslint src tests scripts vite.config.ts",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.ts",
@@ -71,11 +76,12 @@
     "check:dist": "pnpm run build && node scripts/check-dist.ts",
     "prepack": "pnpm run build",
     "opencv:check": "node scripts/check-opencv.ts",
-    "board:check": "node scripts/check-board.ts"
+    "board:check": "node scripts/check-board.ts",
+    "build:editor": "tsc -p tsconfig.editor.json",
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@kubohiroya/turbowarp-camera-source": "0.11.0",
     "@kubohiroya/turbowarp-extension-manifest": "0.2.0",
     "@kubohiroya/vite-plugin-turbowarp-extension": "0.4.0",
     "@types/node": "^24.13.3",
@@ -88,7 +94,9 @@
     "vitest": "^5.0.0"
   },
   "dependencies": {
-    "comlink": "4.4.2"
+    "comlink": "4.4.2",
+    "@kubohiroya/turbowarp-extension-data-editor": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#b5f4b8d2e391a0d57d091c8f3e1c2d58da152dc8",
+    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#53a2a400bbdee6a850379eff29f0d422d948174e"
   },
   "sideEffects": [
     "src/index.ts",
