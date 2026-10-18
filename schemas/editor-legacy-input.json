@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kubohiroya.github.io/turbowarp-camera-calibration/schema/editor-legacy-input.json",
+  "title": "Existing calibration owner legacy input shape",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "calibrationId",
+    "cameraId",
+    "imageWidth",
+    "imageHeight",
+    "intrinsicMatrix",
+    "distortionCoefficients",
+    "calibratedAt",
+    "worldUnit"
+  ],
+  "properties": {
+    "schema": {
+      "const": "twrmc/camera-calibration"
+    },
+    "version": {
+      "const": 1
+    },
+    "calibrationId": {
+      "type": "string"
+    },
+    "cameraId": {
+      "type": "string"
+    },
+    "imageWidth": {
+      "type": "number"
+    },
+    "imageHeight": {
+      "type": "number"
+    },
+    "intrinsicMatrix": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 9,
+      "maxItems": 9
+    },
+    "distortionCoefficients": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "calibratedAt": {
+      "type": "string"
+    },
+    "worldFromCameraMatrix": true,
+    "worldUnit": {
+      "const": "meter"
+    }
+  },
+  "additionalProperties": true
+}

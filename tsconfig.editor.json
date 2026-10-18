@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "declaration": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "types": [],
+    "rootDir": ".",
+    "outDir": "lib-editor",
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src/editor-schema.ts"
+  ]
+}

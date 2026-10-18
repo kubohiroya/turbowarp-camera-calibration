@@ -17,3 +17,5 @@ coverage/
 # OpenCV build scratch. The source and object files live in a Docker volume;
 # this only appears if someone runs the build outside the container.
 tools/opencv/.work/
+
+lib-editor/

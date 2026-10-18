@@ -1,0 +1,15 @@
+# 段階1: Calibration import契約
+
+追跡: https://github.com/kubohiroya/turbowarp-camera-calibration/issues/38 。共通親はextension-data-editor #18。
+
+`./editor-schema`はcalibrationSchemaBundles（camerasource/twcs/legacy/ros）、decodeCalibrationSource、validateCalibrationInputを公開する。Camera Sourceのraw ROS/profile入口を再利用し、既存parseCalibrationProfileと同じconsumer条件を加える。正規化値は検証に使う別値で、source/raw dataを置換しない。controllerやprofile登録は呼ばない。
+
+camerasourceの正本は既存camera-intrinsics-v1.schema.json。twcs/ROSはproducerの固定bundleを再利用する。legacyではこのconsumerが追加キーや12/14係数を受理するため、producerの厳しいlegacy gateを流用せず、所有Schema/editor-legacy-input.jsonと既存parserを合成する。Camera Sourceが受理するfisheyeでもこのconsumerが拒否する条件やzero-skewは維持する。
+
+profileのpure型がDOMを参照しないよう、既存distortion定数・型をdistortion.tsへ分け、従来types.tsから同じ名前を再exportした。既存runtimeは同じ定数とparserを使い、API名と例外文面を維持する。
+
+依存producerはCamera Source commit 9a9a5c905271e603af9a08142527e8a4aace8dec、共通はa1ab4f4f5b384eef08ef26e544186ee9d8ad4543へ固定。Git archiveのprepare/prepack経由で既存runtime/profileと新pure生成物を取得できることを確認。lock解決時だけ明示した2 Git artifactを許可し、取得先照合後に標準frozen installを確認した。永続依存ポリシーは変更していない。
+
+確認: 型検査、既存profileと新adapterの9テスト、既存Vite/runtimeと独立emit、srcなしDOM/Reactなしisolated import/skipLibCheck:false型検査が成功。検証記録はeditor-schema-verification.json。
+
+段階2のフォーム登録/owner encode/bindingは後段。既定OFFのGUIフラグを維持し、新入口の利用停止/本Issueのcommit revertでrollbackする。保存済みデータを移行しない。
