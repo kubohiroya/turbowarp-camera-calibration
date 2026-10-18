@@ -17,7 +17,7 @@ const ENTRY = new URL('../src/runtime.ts', import.meta.url);
  * does not have -- so the entry is guarded rather than trusted.
  */
 describe('the published runtime sub-entry', () => {
-  it('is exposed under ./runtime, alongside the bundle and nothing else', () => {
+  it('keeps the runtime and explicit pure editor entry separate', () => {
     expect(packageMetadata.exports['./runtime']).toEqual({
       types: './lib/runtime.d.ts',
       default: './lib/runtime.js'
@@ -25,10 +25,16 @@ describe('the published runtime sub-entry', () => {
     // No "." entry: the extension is loaded by URL from TurboWarp rather than
     // imported, and exposing it would let a stray bare import pull eleven
     // megabytes of OpenCV into a consumer's bundle.
+    expect(packageMetadata.exports['./editor-schema']).toEqual({
+      types: './lib-editor/src/editor-schema.d.ts',
+      import: './lib-editor/src/editor-schema.js'
+    });
+    expect(packageMetadata.files).toContain('lib-editor/');
     expect(Object.keys(packageMetadata.exports)).toEqual([
       './camera-calibration.js',
       './runtime',
-      './package.json'
+      './package.json',
+      './editor-schema'
     ]);
     expect(packageMetadata.files).toContain('lib/');
   });
@@ -85,6 +91,8 @@ describe('the published runtime sub-entry', () => {
       'src/board/aruco.ts',
       'src/board/pattern.ts',
       'src/calibration/contract.ts',
+      // Shared coefficient constants stay pure; controller/OpenCV remain unreachable.
+      'src/calibration/distortion.ts',
       'src/calibration/types.ts',
       'src/runtime-capability.ts',
       'src/runtime.ts'

@@ -1,7 +1,9 @@
 # Third-party notices
 
 `dist/camera-calibration.js` is a standalone bundle. Everything it needs at run time is inlined,
-including the components listed below.
+including the runtime components listed below. The explicit `./editor-schema` entry also
+depends on the first-party artifacts documented here; that entry is not inlined into the
+extension bundle.
 
 ## OpenCV.js
 
@@ -33,15 +35,29 @@ version `4.4.2`, distributed under the Apache License 2.0.
 
 The contract this extension talks to is imported from
 [`@kubohiroya/turbowarp-camera-source`](https://github.com/kubohiroya/turbowarp-camera-source) at the
-exact version `0.8.0`, through its `./runtime` sub-entry: the camera lease, the runtime capability,
-and the intrinsic profile document. That entry is declarations and a few string constants, and its
-built form imports nothing at all, so nothing of Camera Source reaches
-`dist/camera-calibration.js` beyond those constants. It is imported rather than copied because a
+immutable Git artifact
+`git+https://github.com/kubohiroya/turbowarp-camera-source.git#53a2a400bbdee6a850379eff29f0d422d948174e`
+(package version `0.16.0`), through its `./runtime` sub-entry: the camera lease, the runtime capability,
+and the intrinsic profile document. That runtime entry contains declarations and a few string
+constants; its built form imports nothing, so using this entry adds no camera controller or
+device code to the bundle. The separate pure profile entry is described below. It is imported rather than copied because a
 copy is checked against nothing: this repository's own hand-written copy named a registry method
 Camera Source does not have, and every attempt to publish a profile failed for a reason that had
 nothing to do with what the message said.
 
 Camera Source is distributed under the Mozilla Public License 2.0.
+
+Its pure `./profile` entry supplies calibration parsing and validation used by the runtime
+bundle. Its `./editor-schema` entry supplies the shared profile Schemas used only by this
+package's explicit editor entry.
+
+## Extension Data Editor
+
+The pure Schema engine and diagnostic helpers used by the explicit `./editor-schema` entry
+come from `@kubohiroya/turbowarp-extension-data-editor/schema`, at the immutable Git artifact
+`git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#b5f4b8d2e391a0d57d091c8f3e1c2d58da152dc8`.
+They do not introduce the RJSF UI into the runtime bundle. Extension Data Editor is distributed
+under the Mozilla Public License 2.0.
 
 ## This extension
 

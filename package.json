@@ -96,7 +96,7 @@
   "dependencies": {
     "comlink": "4.4.2",
     "@kubohiroya/turbowarp-extension-data-editor": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#b5f4b8d2e391a0d57d091c8f3e1c2d58da152dc8",
-    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#b40402000fc22c27f4dd9eb81fb46795c450d6c7"
+    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#53a2a400bbdee6a850379eff29f0d422d948174e"
   },
   "sideEffects": [
     "src/index.ts",

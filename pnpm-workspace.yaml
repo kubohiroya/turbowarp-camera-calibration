@@ -1,5 +1,5 @@
 allowBuilds:
-  '@kubohiroya/turbowarp-camera-source@https://codeload.github.com/kubohiroya/turbowarp-camera-source/tar.gz/b40402000fc22c27f4dd9eb81fb46795c450d6c7': true
+  '@kubohiroya/turbowarp-camera-source@https://codeload.github.com/kubohiroya/turbowarp-camera-source/tar.gz/53a2a400bbdee6a850379eff29f0d422d948174e': true
   '@kubohiroya/turbowarp-extension-data-editor@https://codeload.github.com/kubohiroya/turbowarp-extension-data-editor/tar.gz/b5f4b8d2e391a0d57d091c8f3e1c2d58da152dc8': true
   esbuild: false
 minimumReleaseAgeExclude:

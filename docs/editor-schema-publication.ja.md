@@ -1,3 +1,5 @@
+> 現在のCI修正・依存artifactの検証は [editor-schema-ci-fix-20261018.ja.md](editor-schema-ci-fix-20261018.ja.md) / [JSON](editor-schema-ci-fix-20261018.json) を参照。以下の旧pin・検証結果は採取時の履歴として保持する。
+
 # 段階1 修正版のGit依存固定
 
 2026-10-18。対象は既存https://github.com/kubohiroya/turbowarp-camera-calibration/issues/38の段階1修正と依存更新。公開ブランチはfeat/schema/stage1-camera-calibration。自repoの最終commit/remote照合はcoordinatorのstage-1-publication-20261018.jsonに記録し、文書へ自分のcommitを埋め込む循環を避ける。

@@ -1,6 +1,7 @@
 import {access, readFile} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {isExactDependencyPin} from './dependency-pin.ts';
 
 interface PackageMetadata {
   name: string;
@@ -178,10 +179,10 @@ function checkThirdPartyBundle() {
     errors.push('repo-policy.json records a thirdPartyBundle exception but no runtime dependency is bundled');
   }
   for (const [name, range] of dependencies) {
-    // The bundle is reviewed and committed, so every inlined component must be
-    // reproducible from an exact version.
-    if (!/^\d+\.\d+\.\d+/u.test(range)) {
-      errors.push(`package.json dependency ${name} must pin an exact version`);
+    // Both the bundle and the explicit editor entry must resolve reproducibly.
+    // Only the two reviewed first-party artifacts may use immutable Git pins.
+    if (!isExactDependencyPin(name, range)) {
+      errors.push(`package.json dependency ${name} must pin an exact version or approved Git artifact`);
     }
     if (!notices.includes(name)) {
       errors.push(`THIRD_PARTY_NOTICES.md must record ${name}`);
@@ -202,7 +203,9 @@ function checkGeneratedArtifacts() {
 }
 
 async function checkPackContents() {
-  const {stdout} = await execFileAsync('npm', ['pack', '--dry-run', '--ignore-scripts', '--json']);
+  const {stdout} = await execFileAsync('npm', [
+    'pack', '--dry-run', '--ignore-scripts', '--foreground-scripts=false', '--json'
+  ]);
   const [pack] = JSON.parse(stdout) as PackResult[];
   if (!pack) {
     errors.push('npm pack must report a package');
