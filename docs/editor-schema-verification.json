@@ -2,9 +2,9 @@
   "stage": "S1-4/p",
   "repository": "turbowarp-camera-calibration",
   "issue": "https://github.com/kubohiroya/turbowarp-camera-calibration/issues/38",
-  "base": "6baef7142f77b3e63424a3b711659179219ba892",
+  "base": "4db5abe5df203d663fbe979de80ddc4517545a93",
   "branch": "feat/schema/stage1-camera-calibration",
-  "targeted_tests_passed": 10,
+  "targeted_tests_passed": 12,
   "typecheck": "passed",
   "existing_build_and_editor_emit": "passed",
   "source_absent_isolated_import": "passed",
@@ -33,7 +33,7 @@
     "lib-editor/src/calibration/profile.d.ts": "fe6952f815fa28c44d8b4d882107c1301d94bfa86013139bb3ad47ee83bf23a4",
     "lib-editor/src/calibration/profile.js": "4cfa77336be336bd3efd974d67aa8a943328383cbaa5b3b313c1655d7a047bca",
     "lib-editor/src/editor-schema.d.ts": "1126160511db80eaa8fb6ffc37ed511e3b56b233b18762a456dd8a4c8851eead",
-    "lib-editor/src/editor-schema.js": "3a25ab9fdf571311bd09d392183c2266c03b817f65483473274d175f17dc2014"
+    "lib-editor/src/editor-schema.js": "4821232491a811b8486ee4eb1276156f7d496b8dcef9ea444b514623e0d9bed5"
   },
   "source_sha256": {
     "src/board/aruco.ts": "9e04e52797a2a85722916e96984c7e71f2a495d1f71dcc2728d5f5f19b8b9503",
@@ -51,7 +51,7 @@
     "src/calibration/types.ts": "5cadd0e1b6e3efa6f214af1ed56a3dba02237e0efbe5b0bfa0ce295aa66a67dc",
     "src/calibration/worker-backend.ts": "27d9b9dd7a884e3c05d7d6d94c00ef18eed21f16549b04959fc6d0ac5ee481ae",
     "src/config.ts": "0b8d75b463eba1e26ab346d605f5adfddae9482227f2391d7ec16be85b6cd999",
-    "src/editor-schema.ts": "072b2e4470bbfd20b72e5ac9dc9972ea844a550ab36cad490da85a7c11153f3e",
+    "src/editor-schema.ts": "9084e964fb6bde4b2824288f4d1f2ead73cbad7c941470509bcf9fd46599fd49",
     "src/extension.ts": "5c4f57dbf1acabbf711583521aa66d46d95e1b4c658f49a455cc3f3c109cd6c9",
     "src/globals.d.ts": "24e9e8acdeeabbb9f8c5f38d0cbdc653ce0852d0e98189ce60c9fc2d4fb5ce57",
     "src/index.ts": "f22f981c0c285082c35a7425c244206c451865f66db60da8ba7ada88f77d59ef",
@@ -66,5 +66,45 @@
     "arbitrary_schema_UI": false,
     "GUI_dependency_change": false,
     "cause_investigation": false
-  }
+  },
+  "observed_at_utc": "2026-10-18T06:12:49.765581+00:00",
+  "working_tree_modified": true,
+  "review_fix_base_head": "4db5abe5df203d663fbe979de80ddc4517545a93",
+  "local_source_snapshot_sha256": "fb8ca9a2547c5e824d03d1f3ae04aadc2ba8b99a3b9a6fe0f27936f3833b1672",
+  "review_fixes": [
+    "R1",
+    "R3"
+  ],
+  "changed_emitted_files_since_review": [
+    "lib-editor/src/editor-schema.js"
+  ],
+  "review_input_sha256": {
+    "package.json": "45e8cc55a745ba116b7579a38f0d581680b992ae5594a5c65d1c12decda2c587",
+    "pnpm-lock.yaml": "842d45841e3a4140dba44b3ba9909c009d7af38f69200a8ff5272a38a30da11f",
+    "tsconfig.json": "dcd76f7e6245980a88a7402b292f2350653d4e2fa21f4f6940b1b22319f64e86",
+    "tsconfig.editor.json": "719e677d23a27032768057d11778f881e9adf7a911cbcbe3ed4f86704600bbad",
+    "tests/editor-schema.test.ts": "ba0acc124a37664163748511f13e9d8bc314f66ae2f7653b2e256705877416d2"
+  },
+  "review_package_test": {
+    "isolated_consumer": "/tmp/schema-owner-consumer-cq2aK6",
+    "src_absent": true,
+    "react_absent": true,
+    "global_accesses": 0,
+    "strict_no_DOM_skipLibCheck": false,
+    "emit_count": 8
+  },
+  "base_role": "HEAD below the current uncommitted review fixes",
+  "targeted_test_files": [
+    "tests/calibration-profile.test.ts",
+    "tests/editor-schema.test.ts"
+  ],
+  "targeted_test_sha256": {
+    "tests/calibration-profile.test.ts": "7d5e97d5766b4b6dc64968a7ab7e9ebb5ce49833518c4231715d35a648e56e14",
+    "tests/editor-schema.test.ts": "ba0acc124a37664163748511f13e9d8bc314f66ae2f7653b2e256705877416d2"
+  },
+  "lint": "passed for src/editor-schema.ts and tests/editor-schema.test.ts",
+  "dependency_pins_changed": false,
+  "history_before_review_fixes": "/Users/hiroya/Dev/turbowarp-extension-template/docs/block-editor-inventory/implementation-history/stage-1-before-review-fixes-20261018/camera-calibration/docs/editor-schema-verification.json",
+  "record_kind": "historical snapshot before Git artifact alignment",
+  "current_record": "editor-schema-publication.json"
 }

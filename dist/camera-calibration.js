@@ -372,7 +372,7 @@
   	]
   };
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_a333b94bab405600c85445e4488305db/node_modules/@kubohiroya/turbowarp-camera-source/dist/runtime.js
   /**
   * Where the extension instance puts itself on the VM runtime.
   *
@@ -416,7 +416,7 @@
   	return typeof requireVersion === "function" ? candidate : void 0;
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_a333b94bab405600c85445e4488305db/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile.js
   var CAMERA_INTRINSIC_PROFILE_SCHEMA = "twcs/camera-intrinsics";
   /** The application-specific format this contract replaces. Read for migration, never written. */
   var LEGACY_CALIBRATION_SCHEMA = "twrmc/camera-calibration";
@@ -826,7 +826,7 @@
   	});
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/yaml.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_a333b94bab405600c85445e4488305db/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/yaml.js
   /**
   * The part of YAML that camera calibration files are written in.
   *
@@ -1192,7 +1192,7 @@
   	return result;
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/camera-info.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_a333b94bab405600c85445e4488305db/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/camera-info.js
   /**
   * The file a calibration is exchanged in: a ROS `camera_info` YAML document.
   *
@@ -1449,7 +1449,7 @@
   	return values.every((value) => value === 0);
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile-text.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_a333b94bab405600c85445e4488305db/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/profile-text.js
   /**
   * Profile text as an operator hands it over: a ROS `camera_info` YAML file, or profile JSON.
   *
@@ -1486,7 +1486,7 @@
   	return readCameraInfoYaml(trimmed);
   }
   //#endregion
-  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/compatibility.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_a333b94bab405600c85445e4488305db/node_modules/@kubohiroya/turbowarp-camera-source/dist/calibration/compatibility.js
   /** Zoom readings are device-reported floats; compare them with a tolerance rather than exactly. */
   var ZOOM_TOLERANCE = 1e-6;
   var FOCUS_DISTANCE_TOLERANCE = 1e-6;

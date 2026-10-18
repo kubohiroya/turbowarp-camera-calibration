@@ -95,8 +95,8 @@
   },
   "dependencies": {
     "comlink": "4.4.2",
-    "@kubohiroya/turbowarp-extension-data-editor": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#a1ab4f4f5b384eef08ef26e544186ee9d8ad4543",
-    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#9a9a5c905271e603af9a08142527e8a4aace8dec"
+    "@kubohiroya/turbowarp-extension-data-editor": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#b5f4b8d2e391a0d57d091c8f3e1c2d58da152dc8",
+    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#b40402000fc22c27f4dd9eb81fb46795c450d6c7"
   },
   "sideEffects": [
     "src/index.ts",

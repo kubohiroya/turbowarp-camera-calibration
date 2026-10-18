@@ -25,6 +25,11 @@ import {
   parseCalibrationProfile,
 } from './calibration/profile.js';
 export type CalibrationProfileVariant = 'camerasource' | 'twcs' | 'legacy' | 'ros';
+const calibrationIdentity = {
+  ownerId: 'turbowarp-camera-calibration',
+  contractId: 'calibration-profile',
+  revision: 'parser-v0.14.0',
+};
 function bundle(
   doc: typeof document | typeof legacy,
   path: string,
@@ -33,9 +38,7 @@ function bundle(
   const source = { repository: 'turbowarp-camera-calibration', path };
   return {
     identity: {
-      ownerId: 'turbowarp-camera-calibration',
-      contractId: 'calibration-profile',
-      revision: 'parser-v0.14.0',
+      ...calibrationIdentity,
       variantId,
     },
     dialect: '2020-12',
@@ -53,16 +56,23 @@ function bundle(
     },
   };
 }
+function importedBundle(producer: SchemaBundle): SchemaBundle {
+  return {
+    ...producer,
+    identity: { ...calibrationIdentity, variantId: producer.identity.variantId },
+  };
+}
 export const calibrationSchemaBundles = {
   camerasource: bundle(document, 'schemas/camera-intrinsics-v1.schema.json', 'camerasource'),
   legacy: bundle(legacy, 'schemas/editor-legacy-input.json', 'legacy'),
-  twcs: cameraProfileSchemaBundles.twcs,
-  ros: cameraProfileSchemaBundles.ros,
+  twcs: importedBundle(cameraProfileSchemaBundles.twcs),
+  ros: importedBundle(cameraProfileSchemaBundles.ros),
 } as const;
 /** Preserve consumer-specific restrictions, including unsupported fisheye and zero-skew requirements. */
 export const validateCalibrationInput: SyncOwnerValidator = (data) => {
   try {
-    if (data && typeof data === 'object' && Object.hasOwn(data, 'image_width')) {
+    // JSON profile discriminators take priority over extra keys that resemble ROS fields.
+    if (data && typeof data === 'object' && !Object.hasOwn(data, 'schema') && Object.hasOwn(data, 'image_width')) {
       const result = readCameraProfileInput(data);
       if (!result.ok) throw Error();
       assertCameraIntrinsics(fromCameraSourceProfile(result.profile));
