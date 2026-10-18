@@ -1,3 +1,4 @@
+import {registerSourceEditors} from './source-editors.js';
 import {extensionConfig} from './config';
 import definitions from './block-definitions.json';
 import {CameraCalibrationController} from './calibration/controller.js';
@@ -59,7 +60,10 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   private readonly runtime: TurboWarpRuntime;
   private capability: CameraCalibrationCapabilityV1 | undefined;
 
+  private readonly removeSourceEditors: () => void;
+
   public constructor(options: CameraCalibrationExtensionOptions = {}) {
+    this.removeSourceEditors = registerSourceEditors(Scratch, options.nowMilliseconds);
     this.runtime = options.runtime ?? Scratch.vm.runtime;
     const nowMilliseconds = options.nowMilliseconds;
     this.controller = new CameraCalibrationController({
@@ -248,6 +252,7 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   };
 
   private readonly handleDisposed = (): void => {
+    this.removeSourceEditors();
     // Taken down with the runtime it belongs to, so a consumer that outlives
     // the VM reads an absent extension rather than driving a dead controller.
     if (this.runtime[runtimeCapabilityKey] === this.capability) {
