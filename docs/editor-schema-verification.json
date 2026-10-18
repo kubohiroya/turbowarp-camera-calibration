@@ -2,9 +2,9 @@
   "stage": "S1-4/p",
   "repository": "turbowarp-camera-calibration",
   "issue": "https://github.com/kubohiroya/turbowarp-camera-calibration/issues/38",
-  "base": "ec75f6d07ace3492b0b18b68af2c36594eba4c08",
+  "base": "6baef7142f77b3e63424a3b711659179219ba892",
   "branch": "feat/schema/stage1-camera-calibration",
-  "targeted_tests_passed": 9,
+  "targeted_tests_passed": 10,
   "typecheck": "passed",
   "existing_build_and_editor_emit": "passed",
   "source_absent_isolated_import": "passed",
@@ -14,13 +14,15 @@
       "version": "0.1.0",
       "resolved_path": "/private/tmp/schema-stage1-worktrees-20261018/camera-calibration/node_modules/.pnpm/@kubohiroya+turbowarp-extension-data-editor@https+++codeload.github.com+kubohiroya+turb_5f902832b16dc00a1fc95546529ab82c/node_modules/@kubohiroya/turbowarp-extension-data-editor",
       "manifest_sha256": "3e86db1bf667088a7a87ada19fc11573082918335dd281073464ca4fcebf74da",
-      "specifier": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#a1ab4f4f5b384eef08ef26e544186ee9d8ad4543"
+      "specifier": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#a1ab4f4f5b384eef08ef26e544186ee9d8ad4543",
+      "via": "@kubohiroya/turbowarp-camera-calibration"
     },
     "@kubohiroya/turbowarp-camera-source": {
       "version": "0.16.0",
       "resolved_path": "/private/tmp/schema-stage1-worktrees-20261018/camera-calibration/node_modules/.pnpm/@kubohiroya+turbowarp-camera-source@https+++codeload.github.com+kubohiroya+turbowarp-ca_88dae6e3325df257cff0b0ab2a7f1711/node_modules/@kubohiroya/turbowarp-camera-source",
       "manifest_sha256": "bf0cb76f0f9625ad08210faec866c2bf2536cb366f4543ea556ab2e1989449d3",
-      "specifier": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#9a9a5c905271e603af9a08142527e8a4aace8dec"
+      "specifier": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#9a9a5c905271e603af9a08142527e8a4aace8dec",
+      "via": "@kubohiroya/turbowarp-camera-calibration"
     }
   },
   "emitted_sha256": {
@@ -30,9 +32,34 @@
     "lib-editor/src/calibration/distortion.js": "d3e36384ad0b6889610daedaf37cb19cc461ca9a3d76b8b7825135fd479fe655",
     "lib-editor/src/calibration/profile.d.ts": "fe6952f815fa28c44d8b4d882107c1301d94bfa86013139bb3ad47ee83bf23a4",
     "lib-editor/src/calibration/profile.js": "4cfa77336be336bd3efd974d67aa8a943328383cbaa5b3b313c1655d7a047bca",
-    "lib-editor/src/editor-schema.d.ts": "c7a063fe22cc5fa03bb2d23e9060ed886cceb8c5c92077ba5154aedfc53ef7fe",
-    "lib-editor/src/editor-schema.js": "37d3000dd9415db73d3fefff59df68bb550d263421386686bdc9d1b143f4a4d3"
+    "lib-editor/src/editor-schema.d.ts": "1126160511db80eaa8fb6ffc37ed511e3b56b233b18762a456dd8a4c8851eead",
+    "lib-editor/src/editor-schema.js": "3a25ab9fdf571311bd09d392183c2266c03b817f65483473274d175f17dc2014"
   },
+  "source_sha256": {
+    "src/board/aruco.ts": "9e04e52797a2a85722916e96984c7e71f2a495d1f71dcc2728d5f5f19b8b9503",
+    "src/board/pattern.ts": "a90ab9cc80144369445514b70fc657b588a2f91d7e6e5d7f4a593bab0386119c",
+    "src/calibration/camera-source.ts": "97e1f9f0a7aeaa0f2c9390215324457c99b698c7094b4e67b9042124c9e5fecd",
+    "src/calibration/contract.ts": "a2222c3f77895cdc4efd6b64367bfcbacda41185d362cb28b74b39fcc68388a2",
+    "src/calibration/controller.ts": "1821b5d5f4249487a0dea5b692778769c4e821d1ba5df3a14ef1f679badbb445",
+    "src/calibration/distortion.ts": "e463fcec3e8ef59292bcf59c0dce460b7b659856d134bd8f92e15e432b116c30",
+    "src/calibration/measures.ts": "8579a689e56de9609b974007d2cedf84006ea7bc4d18751ed301111f97ffffa2",
+    "src/calibration/opencv-backend.ts": "7bb4267eb235cb53d441d8faab554e0e97fb60b3d289811ef860ea826a12a29f",
+    "src/calibration/opencv-symbols.ts": "2aada8213edca938e79a3b48564777cfe630afc68d3d7ae15b114b3a4941e37a",
+    "src/calibration/opencv-worker.ts": "da5cd2c3cf5b9cfd899823b5b063a83a20cecc43636bfba04de47d4008062981",
+    "src/calibration/pose.ts": "2ac42d986ea5eb6e03ae6e18c28842110f97df938c456a9b6563078629a2b47b",
+    "src/calibration/profile.ts": "11e2f7f024d5cca38314fa3d7def15872c19e986ec7e0a282681935d78ac3592",
+    "src/calibration/types.ts": "5cadd0e1b6e3efa6f214af1ed56a3dba02237e0efbe5b0bfa0ce295aa66a67dc",
+    "src/calibration/worker-backend.ts": "27d9b9dd7a884e3c05d7d6d94c00ef18eed21f16549b04959fc6d0ac5ee481ae",
+    "src/config.ts": "0b8d75b463eba1e26ab346d605f5adfddae9482227f2391d7ec16be85b6cd999",
+    "src/editor-schema.ts": "072b2e4470bbfd20b72e5ac9dc9972ea844a550ab36cad490da85a7c11153f3e",
+    "src/extension.ts": "5c4f57dbf1acabbf711583521aa66d46d95e1b4c658f49a455cc3f3c109cd6c9",
+    "src/globals.d.ts": "24e9e8acdeeabbb9f8c5f38d0cbdc653ce0852d0e98189ce60c9fc2d4fb5ce57",
+    "src/index.ts": "f22f981c0c285082c35a7425c244206c451865f66db60da8ba7ada88f77d59ef",
+    "src/runtime-capability.ts": "9d256178c757eeb427532df6867ff3627598ed39949c884aab34b3011949fb0c",
+    "src/runtime.ts": "9e3929a728a8456e2dcf489beef15d508769abc36100d5ae129b85f2e0749804"
+  },
+  "source_emit_hash_matches": 8,
+  "side_effect_guarded_isolated_import": "0 DOM/VM/network global accesses; React absent",
   "scope": {
     "new_extension_editor_registration": false,
     "schema_authoring_UI": false,

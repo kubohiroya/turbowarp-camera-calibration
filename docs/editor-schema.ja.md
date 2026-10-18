@@ -13,3 +13,13 @@ profileのpure型がDOMを参照しないよう、既存distortion定数・型�
 確認: 型検査、既存profileと新adapterの9テスト、既存Vite/runtimeと独立emit、srcなしDOM/Reactなしisolated import/skipLibCheck:false型検査が成功。検証記録はeditor-schema-verification.json。
 
 段階2のフォーム登録/owner encode/bindingは後段。既定OFFのGUIフラグを維持し、新入口の利用停止/本Issueのcommit revertでrollbackする。保存済みデータを移行しない。
+
+## S1-5の最終確認
+
+対象は合計10ケース（増分検証を含む）。srcを除いた実packageでReact不在・DOM/VM/通信globalアクセス0、skipLibCheck:falseの型検査を確認し、独立生成8ファイルを再emitと全SHA-256照合した。16契約の横断fixtureと依存artifact照合の記録は共通repoのschema-stage1-*.jsonを参照。既存生成基準は保持する。
+
+validateCalibrationSourceを追加し、形式不正・未知variantでも元sourceを保持した安全な診断を返す。raw parser例外を診断へ混ぜない。
+
+既存readerと同じtrim/BOM処理をparse前だけに適用し、返すsourceは原文のままとする。ROSの長さ条件はtrim後に判定される従来挙動を維持し、64 KiBを超える前後空白で受理を狭めない。回帰fixtureを追加確認した。
+
+従来依存0.11.0とのprofile/profile-text/yaml実装3ファイルとROS mapping以降のhelper群はbyte hash一致。新raw ROS関数への委譲以外の既存readerロジックを変えていない。比較はeditor-schema-profile-compat.jsonに記録した。

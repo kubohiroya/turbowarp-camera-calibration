@@ -16,6 +16,12 @@ it('matches all existing JSON input fixtures and legacy extra-field/coefficient 
 });
 it('keeps raw ROS/twcs and consumer-specific fisheye rejection',()=>{
  const profile={schema:'twcs/camera-intrinsics' as const,version:1 as const,profileId:'run',cameraId:'camera',calibratedAt:'2026-09-15T04:05:06Z',producer:'fixture',cameraModel:'pinhole' as const,image:{width:800,height:600,undistorted:false},intrinsics:{fx:700,fy:700,cx:400,cy:300,skew:0},distortion:{model:'none' as const,coefficients:[]}};
- compare(JSON.stringify(profile));const source=serializeCameraInfoYaml(profile);compare(source);expect(decodeCalibrationSource(source)).toHaveProperty('data.camera_matrix');
+ compare(JSON.stringify(profile));compare('\ufeff'+JSON.stringify(profile));const source=serializeCameraInfoYaml(profile);compare(source);compare(' '.repeat(65536)+'\n'+source);expect(decodeCalibrationSource(source)).toHaveProperty('data.camera_matrix');
  const fisheye={...profile,distortion:{model:'kannala-brandt' as const,coefficients:[0,0,0,0]}};compare(JSON.stringify(fisheye));compare(serializeCameraInfoYaml(fisheye));
+});
+
+import {validateCalibrationSource} from '../src/editor-schema.js';
+it('source boundary preserves failure source and safe variant/format diagnostics',()=>{
+ for(const source of ['{private malformed','{"schema":"private-unknown"}']) {const result=validateCalibrationSource(source,context);expect(result.source).toBe(source);expect(result.result.kind).toBe('invalid');expect(JSON.stringify(result.result)).not.toContain('private');}
+ const source=readFileSync(new URL('./fixtures/calibration/valid-camera-intrinsics-v1.json',import.meta.url),'utf8');expect(validateCalibrationSource(source,context).result.kind).toBe('valid');
 });

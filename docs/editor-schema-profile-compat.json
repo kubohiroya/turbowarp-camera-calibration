@@ -1,0 +1,30 @@
+{
+  "from": "0.11.0",
+  "to": "0.16.0 + explicit raw ROS entry",
+  "results": [
+    {
+      "file": "calibration/profile.js",
+      "oldSha256": "8d0bd7171e89dccc7f26821a6cc8d14ddf1c75de5e7da6a6f21136cea5b6a25e",
+      "newSha256": "8d0bd7171e89dccc7f26821a6cc8d14ddf1c75de5e7da6a6f21136cea5b6a25e",
+      "identical": true
+    },
+    {
+      "file": "calibration/profile-text.js",
+      "oldSha256": "cfa7950ae2f4cb3294c0b0624be4f01a979a38cb1a5b715dfa9fdae54c2c5938",
+      "newSha256": "cfa7950ae2f4cb3294c0b0624be4f01a979a38cb1a5b715dfa9fdae54c2c5938",
+      "identical": true
+    },
+    {
+      "file": "calibration/yaml.js",
+      "oldSha256": "e85793b37296ba2a429f71db81eed989e5a9e8da33e0a255e08eb7faa6d3085e",
+      "newSha256": "e85793b37296ba2a429f71db81eed989e5a9e8da33e0a255e08eb7faa6d3085e",
+      "identical": true
+    }
+  ],
+  "ros_mapping_and_helpers": {
+    "old_sha256": "8eb05b2a65edce2646c97bd780b822b2db7f86d70ce60af0291a1203058f0aa0",
+    "new_sha256": "8eb05b2a65edce2646c97bd780b822b2db7f86d70ce60af0291a1203058f0aa0",
+    "identical": true,
+    "change": "Existing reader delegates to the newly exported value-only wrapper; parsing and mapping logic stay identical."
+  }
+}
