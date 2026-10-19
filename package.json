@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-camera-calibration",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "A TurboWarp extension that calibrates a shared Camera Source camera and publishes its intrinsic calibration profile.",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "license": "MPL-2.0",
@@ -82,8 +82,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@kubohiroya/turbowarp-extension-manifest": "0.2.0",
-    "@kubohiroya/vite-plugin-turbowarp-extension": "0.4.0",
+    "@kubohiroya/turbowarp-extension-manifest": "0.3.2",
+    "@kubohiroya/vite-plugin-turbowarp-extension": "0.6.1",
     "@types/node": "^24.13.3",
     "ajv": "^8.20.0",
     "eslint": "^9.39.5",
@@ -96,11 +96,17 @@
   },
   "dependencies": {
     "comlink": "4.4.2",
-    "@kubohiroya/turbowarp-extension-data-editor": "git+https://github.com/kubohiroya/turbowarp-extension-data-editor.git#485f0e550e622235624b5e9176820161aeeba252",
-    "@kubohiroya/turbowarp-camera-source": "git+https://github.com/kubohiroya/turbowarp-camera-source.git#e23f2e1e3db28c5b7e0290949cf99004b689d90c"
+    "@kubohiroya/turbowarp-extension-data-editor": "0.2.1",
+    "@kubohiroya/turbowarp-camera-source": "0.17.1"
   },
   "sideEffects": [
     "src/index.ts",
     "dist/*"
-  ]
+  ],
+  "gitHead": "2ea78eaa24d7c9c6f957b6719773196d9d58289a",
+  "x-turbowarp-source": {
+    "revision": "2ea78eaa24d7c9c6f957b6719773196d9d58289a",
+    "revisionRole": "base-commit",
+    "sourceState": "local-release-overlay"
+  }
 }

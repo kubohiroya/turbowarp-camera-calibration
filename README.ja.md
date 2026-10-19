@@ -139,7 +139,7 @@ Node.jsやbuild環境を用意する必要はありません。専用buildのOpe
 検証済みのversionをexact pinします。
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.15.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.15.1
 ```
 
 standalone bundle:
@@ -151,7 +151,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 version固定CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.15.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.15.1/dist/camera-calibration.js
 ```
 
 ## クイックスタート

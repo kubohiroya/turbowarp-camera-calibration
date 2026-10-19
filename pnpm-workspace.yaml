@@ -1,10 +1,10 @@
 allowBuilds:
-  '@kubohiroya/turbowarp-camera-source@https://codeload.github.com/kubohiroya/turbowarp-camera-source/tar.gz/e23f2e1e3db28c5b7e0290949cf99004b689d90c': true
-  '@kubohiroya/turbowarp-extension-data-editor@https://codeload.github.com/kubohiroya/turbowarp-extension-data-editor/tar.gz/485f0e550e622235624b5e9176820161aeeba252': true
   esbuild: false
 minimumReleaseAgeExclude:
-  - '@kubohiroya/vite-plugin-turbowarp-extension@0.4.0'
-  - '@kubohiroya/turbowarp-camera-source@0.7.0 || 0.8.0 || 0.11.0'
 
+  - '@kubohiroya/turbowarp-camera-source@0.17.1'
+  - '@kubohiroya/turbowarp-extension-data-editor@0.2.1'
+  - '@kubohiroya/turbowarp-extension-manifest@0.3.2'
+  - '@kubohiroya/vite-plugin-turbowarp-extension@0.6.1'
 overrides:
   fast-uri: 3.1.8
