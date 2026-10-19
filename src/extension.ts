@@ -1,3 +1,4 @@
+import {fixedInputEditors, registerFixedInputEditors} from './fixed-input-editors.js';
 import {registerSourceEditors} from './source-editors.js';
 import {extensionConfig} from './config';
 import definitions from './block-definitions.json';
@@ -61,20 +62,31 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   private capability: CameraCalibrationCapabilityV1 | undefined;
 
   private readonly removeSourceEditors: () => void;
+  private removeFixedEditors: () => void = () => {};
 
   public constructor(options: CameraCalibrationExtensionOptions = {}) {
     this.removeSourceEditors = registerSourceEditors(Scratch, options.nowMilliseconds);
     this.runtime = options.runtime ?? Scratch.vm.runtime;
-    const nowMilliseconds = options.nowMilliseconds;
-    this.controller = new CameraCalibrationController({
-      runtime: this.runtime,
-      backend: options.backend ?? openCvBackendFactory,
-      ...(nowMilliseconds ? {nowMilliseconds} : {})
-    });
-    this.runtime[runtimeCapabilityKey] = this.createCapability();
-    this.runtime.on?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
-    this.runtime.on?.('PROJECT_LOADED', this.handleProjectBoundary);
-    this.runtime.on?.('RUNTIME_DISPOSED', this.handleDisposed);
+    try {
+      this.removeFixedEditors = registerFixedInputEditors(Scratch, fixedInputEditors, this.runtime);
+      const nowMilliseconds = options.nowMilliseconds;
+      this.controller = new CameraCalibrationController({
+        runtime: this.runtime,
+        backend: options.backend ?? openCvBackendFactory,
+        ...(nowMilliseconds ? {nowMilliseconds} : {})
+      });
+      this.runtime[runtimeCapabilityKey] = this.createCapability();
+      this.runtime.on?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
+      this.runtime.on?.('PROJECT_LOADED', this.handleProjectBoundary);
+      this.runtime.on?.('RUNTIME_DISPOSED', this.handleDisposed);
+    } catch (error) {
+      this.removeFixedEditors();
+      this.removeSourceEditors();
+      this.runtime.off?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
+      this.runtime.off?.('PROJECT_LOADED', this.handleProjectBoundary);
+      this.runtime.off?.('RUNTIME_DISPOSED', this.handleDisposed);
+      throw error;
+    }
   }
 
   public getInfo(): Record<string, unknown> {
@@ -252,6 +264,7 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   };
 
   private readonly handleDisposed = (): void => {
+    this.removeFixedEditors();
     this.removeSourceEditors();
     // Taken down with the runtime it belongs to, so a consumer that outlives
     // the VM reads an absent extension rather than driving a dead controller.

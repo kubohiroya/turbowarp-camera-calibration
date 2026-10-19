@@ -139,7 +139,7 @@ Node.jsやbuild環境を用意する必要はありません。専用buildのOpe
 検証済みのversionをexact pinします。
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.15.0
+pnpm add --save-exact @kubohiroya/turbowarp-camera-calibration@0.15.1
 ```
 
 standalone bundle:
@@ -151,7 +151,7 @@ node_modules/@kubohiroya/turbowarp-camera-calibration/dist/camera-calibration.js
 version固定CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.15.0/dist/camera-calibration.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-camera-calibration@0.15.1/dist/camera-calibration.js
 ```
 
 ## クイックスタート
@@ -488,3 +488,7 @@ CIの別ステップで実行します。OpenCV自体のbuildし直しは
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)に記載しています。bundleは
 この機能拡張のためにbuildしたApache License 2.0のOpenCV.js `4.12.0`を
 インライン展開しています。
+
+固定入力の編集は拡張構築時の任意editor APIを使います。後からのAPI追加・差替えにはGUI再読込と拡張インスタンス再構築が必要です。Dialogs/FixedInputsは起動時既定OFFです。未変更rawは保持し、reporterは評価しません。機器・sessionの実行条件は実行時検証の責務です。固定fieldのSchema正本は`schemas/block-editor-fixed-inputs.schema.json`、`docs/schemas/`は`scripts/generate-fixed-input-docs.mjs`による生成物です。Schema URIは識別子で、編集時に取得しません。
+
+今回のS3-4候補はCamera Sourceをimmutable Git commit `e23f2e1e3db28c5b7e0290949cf99004b689d90c`へ固定し、manifest・lock・実解決のbytes・間接C3依存を一緒に検証します。旧`e11cc43ec35ff333bbefd50e8dcb461ee939c102`は切戻し基準として保持します。PR作成・merge・npm公開・S3-5は別工程であり、まだ実施していません。
