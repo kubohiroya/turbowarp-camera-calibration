@@ -1,3 +1,4 @@
+import {URL} from 'node:url';
 import {readFile, writeFile, mkdir} from 'node:fs/promises';
 import process from 'node:process';
 const root = new URL('../', import.meta.url);
