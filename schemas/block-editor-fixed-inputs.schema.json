@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kubohiroya.github.io/turbowarp-camera-calibration/schemas/block-editor-fixed-inputs.schema.json",
+  "$defs": {
+    "startCameraCalibration": {
+      "type": "object",
+      "properties": {
+        "COLUMNS": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 20
+        },
+        "ROWS": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 20
+        },
+        "SQUARE_METERS": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "MARKER_METERS": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "MAX_ERROR_PX": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "measureCameraBoardPose": {
+      "type": "object",
+      "properties": {
+        "COLUMNS": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 20
+        },
+        "ROWS": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 20
+        },
+        "SQUARE_METERS": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "MARKER_METERS": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "SCALE_SOURCE": {
+          "type": "string",
+          "enum": [
+            "nominal",
+            "measured"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

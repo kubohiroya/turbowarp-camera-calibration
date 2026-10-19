@@ -57,6 +57,133 @@
   	docsURI: "https://kubohiroya.github.io/turbowarp-camera-calibration/",
   	blockIconURI: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiByeD0iNCIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjNEM5N0ZGIiBzdHJva2Utd2lkdGg9IjIiLz48ZyBmaWxsPSIjNEM5N0ZGIj48cmVjdCB4PSI2IiB5PSI2IiB3aWR0aD0iOSIgaGVpZ2h0PSI5Ii8+PHJlY3QgeD0iMjQiIHk9IjYiIHdpZHRoPSI5IiBoZWlnaHQ9IjkiLz48cmVjdCB4PSIxNSIgeT0iMTUiIHdpZHRoPSI5IiBoZWlnaHQ9IjkiLz48cmVjdCB4PSIzMyIgeT0iMTUiIHdpZHRoPSI5IiBoZWlnaHQ9IjkiLz48cmVjdCB4PSI2IiB5PSIyNCIgd2lkdGg9IjkiIGhlaWdodD0iOSIvPjxyZWN0IHg9IjI0IiB5PSIyNCIgd2lkdGg9IjkiIGhlaWdodD0iOSIvPjxyZWN0IHg9IjE1IiB5PSIzMyIgd2lkdGg9IjkiIGhlaWdodD0iOSIvPjxyZWN0IHg9IjMzIiB5PSIzMyIgd2lkdGg9IjkiIGhlaWdodD0iOSIvPjwvZz48L3N2Zz4="
   };
+  /**
+  * The marker patterns of OpenCV's `DICT_4X4_50`.
+  *
+  * Fifty markers of sixteen bits: a hundred bytes, which is why the board can be
+  * drawn in the page at all. The alternative was shipping OpenCV to the display
+  * side to ask it, and OpenCV is eleven megabytes.
+  *
+  * Extracted from `cv.getPredefinedDictionary(cv.DICT_4X4_50)` rather than
+  * transcribed, and checked against a board OpenCV drew itself: the first ten
+  * markers of a 10x7 board read back bit for bit. A dictionary is an arbitrary
+  * table, so a copy made any other way would be a copy nothing could check.
+  *
+  * Each entry is the 4x4 data grid, row-major, most significant bit at the top
+  * left, a set bit meaning white.
+  */
+  var DICT_4X4_50 = [
+  	46386,
+  	3994,
+  	13101,
+  	39238,
+  	21662,
+  	31181,
+  	40494,
+  	50418,
+  	65242,
+  	53078,
+  	63889,
+  	4519,
+  	3767,
+  	10767,
+  	9393,
+  	9790,
+  	18021,
+  	26112,
+  	27742,
+  	30383,
+  	34443,
+  	45099,
+  	52437,
+  	56706,
+  	65095,
+  	38001,
+  	44260,
+  	42324,
+  	8483,
+  	13423,
+  	17429,
+  	22450,
+  	40655,
+  	61643,
+  	2222,
+  	2345,
+  	6261,
+  	1279,
+  	3574,
+  	7258,
+  	5912,
+  	10792,
+  	12940,
+  	14514,
+  	9448,
+  	12011,
+  	11583,
+  	19300,
+  	20526,
+  	20499
+  ];
+  var JsonSnapshotError = class extends Error {
+  	constructor(kind, dataPath) {
+  		super("JSON snapshot failed.");
+  		this.kind = kind;
+  		this.dataPath = dataPath;
+  	}
+  };
+  function appendPointer(path, key) {
+  	return `${path}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+  }
+  /** Copy JSON values without invoking accessors, toJSON, or input iterators. */
+  function snapshotJson(value) {
+  	const active = /* @__PURE__ */ new WeakSet();
+  	let remaining = 1e5;
+  	const visit = (input, path, depth) => {
+  		if (--remaining < 0 || depth > 128) throw new JsonSnapshotError("limit", path);
+  		if (input === null || typeof input === "string" || typeof input === "boolean") return input;
+  		if (typeof input === "number" && Number.isFinite(input)) return input;
+  		if (typeof input !== "object" || input === null || active.has(input)) throw new JsonSnapshotError("invalid", path);
+  		const array = Array.isArray(input);
+  		const prototype = Object.getPrototypeOf(input);
+  		if (!array && prototype !== null && prototype !== Object.prototype) throw new JsonSnapshotError("invalid", path);
+  		if (Object.getOwnPropertySymbols(input).length) throw new JsonSnapshotError("invalid", path);
+  		active.add(input);
+  		try {
+  			if (array) {
+  				const length = input.length;
+  				if (!Number.isSafeInteger(length) || length > remaining) throw new JsonSnapshotError("limit", path);
+  				const result = [];
+  				for (let i = 0; i < length; i++) {
+  					const child = appendPointer(path, String(i));
+  					const descriptor = Object.getOwnPropertyDescriptor(input, i);
+  					if (!descriptor || !("value" in descriptor)) throw new JsonSnapshotError("invalid", child);
+  					result.push(visit(descriptor.value, child, depth + 1));
+  				}
+  				for (const key of Object.keys(input)) if (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length) throw new JsonSnapshotError("invalid", appendPointer(path, key));
+  				return result;
+  			}
+  			const result = {};
+  			for (const key of Object.keys(input)) {
+  				const child = appendPointer(path, key);
+  				const descriptor = Object.getOwnPropertyDescriptor(input, key);
+  				if (!descriptor || !("value" in descriptor)) throw new JsonSnapshotError("invalid", child);
+  				Object.defineProperty(result, key, {
+  					value: visit(descriptor.value, child, depth + 1),
+  					enumerable: true,
+  					writable: true,
+  					configurable: true
+  				});
+  			}
+  			return result;
+  		} finally {
+  			active.delete(input);
+  		}
+  	};
+  	return visit(value, "", 0);
+  }
+  function isJsonRecord(value) {
+  	return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
   var require_code$1 = /* @__PURE__ */ __commonJSMin(((exports) => {
   	Object.defineProperty(exports, "__esModule", { value: true });
   	exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -2719,16 +2846,16 @@
   	}
   }));
   var data_exports = /* @__PURE__ */ __exportAll({
-  	$id: () => $id$14,
+  	$id: () => $id$15,
   	additionalProperties: () => false,
   	default: () => data_default,
   	description: () => description$2,
   	properties: () => properties$14,
   	required: () => required$5,
   	type: () => type$14
-  }), $id$14, description$2, type$14, required$5, properties$14, data_default;
+  }), $id$15, description$2, type$14, required$5, properties$14, data_default;
   var init_data = __esmMin((() => {
-  	$id$14 = "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#";
+  	$id$15 = "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#";
   	description$2 = "Meta-schema for $data reference (JSON AnySchema extension proposal)";
   	type$14 = "object";
   	required$5 = ["$data"];
@@ -2737,7 +2864,7 @@
   		"anyOf": [{ "format": "relative-json-pointer" }, { "format": "json-pointer" }]
   	} };
   	data_default = {
-  		$id: $id$14,
+  		$id: $id$15,
   		description: description$2,
   		type: type$14,
   		required: required$5,
@@ -5989,18 +6116,18 @@
   	};
   }));
   var json_schema_draft_07_exports = /* @__PURE__ */ __exportAll({
-  	$id: () => $id$13,
-  	$schema: () => $schema$13,
+  	$id: () => $id$14,
+  	$schema: () => $schema$14,
   	default: () => json_schema_draft_07_default,
   	definitions: () => definitions,
   	properties: () => properties$13,
   	title: () => title$13,
   	type: () => type$13
   });
-  var $schema$13, $id$13, title$13, definitions, type$13, properties$13, json_schema_draft_07_default;
+  var $schema$14, $id$14, title$13, definitions, type$13, properties$13, json_schema_draft_07_default;
   var init_json_schema_draft_07 = __esmMin((() => {
-  	$schema$13 = "http://json-schema.org/draft-07/schema#";
-  	$id$13 = "http://json-schema.org/draft-07/schema#";
+  	$schema$14 = "http://json-schema.org/draft-07/schema#";
+  	$id$14 = "http://json-schema.org/draft-07/schema#";
   	title$13 = "Core schema meta-schema";
   	definitions = {
   		"schemaArray": {
@@ -6131,8 +6258,8 @@
   		"not": { "$ref": "#" }
   	};
   	json_schema_draft_07_default = {
-  		$schema: $schema$13,
-  		$id: $id$13,
+  		$schema: $schema$14,
+  		$id: $id$14,
   		title: title$13,
   		definitions,
   		type: type$13,
@@ -6504,8 +6631,8 @@
   var schema_exports = /* @__PURE__ */ __exportAll({
   	$comment: () => $comment,
   	$dynamicAnchor: () => $dynamicAnchor$7,
-  	$id: () => $id$12,
-  	$schema: () => $schema$12,
+  	$id: () => $id$13,
+  	$schema: () => $schema$13,
   	$vocabulary: () => $vocabulary$7,
   	allOf: () => allOf$1,
   	default: () => schema_default,
@@ -6513,10 +6640,10 @@
   	title: () => title$12,
   	type: () => type$12
   });
-  var $schema$12, $id$12, $vocabulary$7, $dynamicAnchor$7, title$12, allOf$1, type$12, $comment, properties$12, schema_default;
+  var $schema$13, $id$13, $vocabulary$7, $dynamicAnchor$7, title$12, allOf$1, type$12, $comment, properties$12, schema_default;
   var init_schema = __esmMin((() => {
-  	$schema$12 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$12 = "https://json-schema.org/draft/2020-12/schema";
+  	$schema$13 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$13 = "https://json-schema.org/draft/2020-12/schema";
   	$vocabulary$7 = {
   		"https://json-schema.org/draft/2020-12/vocab/core": true,
   		"https://json-schema.org/draft/2020-12/vocab/applicator": true,
@@ -6566,8 +6693,8 @@
   		}
   	};
   	schema_default = {
-  		$schema: $schema$12,
-  		$id: $id$12,
+  		$schema: $schema$13,
+  		$id: $id$13,
   		$vocabulary: $vocabulary$7,
   		$dynamicAnchor: $dynamicAnchor$7,
   		title: title$12,
@@ -6578,20 +6705,20 @@
   	};
   }));
   var applicator_exports = /* @__PURE__ */ __exportAll({
-  	$defs: () => $defs$3,
+  	$defs: () => $defs$4,
   	$dynamicAnchor: () => $dynamicAnchor$6,
-  	$id: () => $id$11,
-  	$schema: () => $schema$11,
+  	$id: () => $id$12,
+  	$schema: () => $schema$12,
   	$vocabulary: () => $vocabulary$6,
   	default: () => applicator_default,
   	properties: () => properties$11,
   	title: () => title$11,
   	type: () => type$11
   });
-  var $schema$11, $id$11, $vocabulary$6, $dynamicAnchor$6, title$11, type$11, properties$11, $defs$3, applicator_default;
+  var $schema$12, $id$12, $vocabulary$6, $dynamicAnchor$6, title$11, type$11, properties$11, $defs$4, applicator_default;
   var init_applicator = __esmMin((() => {
-  	$schema$11 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$11 = "https://json-schema.org/draft/2020-12/meta/applicator";
+  	$schema$12 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$12 = "https://json-schema.org/draft/2020-12/meta/applicator";
   	$vocabulary$6 = { "https://json-schema.org/draft/2020-12/vocab/applicator": true };
   	$dynamicAnchor$6 = "meta";
   	title$11 = "Applicator vocabulary meta-schema";
@@ -6626,36 +6753,36 @@
   		"oneOf": { "$ref": "#/$defs/schemaArray" },
   		"not": { "$dynamicRef": "#meta" }
   	};
-  	$defs$3 = { "schemaArray": {
+  	$defs$4 = { "schemaArray": {
   		"type": "array",
   		"minItems": 1,
   		"items": { "$dynamicRef": "#meta" }
   	} };
   	applicator_default = {
-  		$schema: $schema$11,
-  		$id: $id$11,
+  		$schema: $schema$12,
+  		$id: $id$12,
   		$vocabulary: $vocabulary$6,
   		$dynamicAnchor: $dynamicAnchor$6,
   		title: title$11,
   		type: type$11,
   		properties: properties$11,
-  		$defs: $defs$3
+  		$defs: $defs$4
   	};
   }));
   var unevaluated_exports = /* @__PURE__ */ __exportAll({
   	$dynamicAnchor: () => $dynamicAnchor$5,
-  	$id: () => $id$10,
-  	$schema: () => $schema$10,
+  	$id: () => $id$11,
+  	$schema: () => $schema$11,
   	$vocabulary: () => $vocabulary$5,
   	default: () => unevaluated_default,
   	properties: () => properties$10,
   	title: () => title$10,
   	type: () => type$10
   });
-  var $schema$10, $id$10, $vocabulary$5, $dynamicAnchor$5, title$10, type$10, properties$10, unevaluated_default;
+  var $schema$11, $id$11, $vocabulary$5, $dynamicAnchor$5, title$10, type$10, properties$10, unevaluated_default;
   var init_unevaluated = __esmMin((() => {
-  	$schema$10 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$10 = "https://json-schema.org/draft/2020-12/meta/unevaluated";
+  	$schema$11 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$11 = "https://json-schema.org/draft/2020-12/meta/unevaluated";
   	$vocabulary$5 = { "https://json-schema.org/draft/2020-12/vocab/unevaluated": true };
   	$dynamicAnchor$5 = "meta";
   	title$10 = "Unevaluated applicator vocabulary meta-schema";
@@ -6665,8 +6792,8 @@
   		"unevaluatedProperties": { "$dynamicRef": "#meta" }
   	};
   	unevaluated_default = {
-  		$schema: $schema$10,
-  		$id: $id$10,
+  		$schema: $schema$11,
+  		$id: $id$11,
   		$vocabulary: $vocabulary$5,
   		$dynamicAnchor: $dynamicAnchor$5,
   		title: title$10,
@@ -6676,18 +6803,18 @@
   }));
   var content_exports = /* @__PURE__ */ __exportAll({
   	$dynamicAnchor: () => $dynamicAnchor$4,
-  	$id: () => $id$9,
-  	$schema: () => $schema$9,
+  	$id: () => $id$10,
+  	$schema: () => $schema$10,
   	$vocabulary: () => $vocabulary$4,
   	default: () => content_default,
   	properties: () => properties$9,
   	title: () => title$9,
   	type: () => type$9
   });
-  var $schema$9, $id$9, $vocabulary$4, $dynamicAnchor$4, title$9, type$9, properties$9, content_default;
+  var $schema$10, $id$10, $vocabulary$4, $dynamicAnchor$4, title$9, type$9, properties$9, content_default;
   var init_content = __esmMin((() => {
-  	$schema$9 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$9 = "https://json-schema.org/draft/2020-12/meta/content";
+  	$schema$10 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$10 = "https://json-schema.org/draft/2020-12/meta/content";
   	$vocabulary$4 = { "https://json-schema.org/draft/2020-12/vocab/content": true };
   	$dynamicAnchor$4 = "meta";
   	title$9 = "Content vocabulary meta-schema";
@@ -6698,8 +6825,8 @@
   		"contentSchema": { "$dynamicRef": "#meta" }
   	};
   	content_default = {
-  		$schema: $schema$9,
-  		$id: $id$9,
+  		$schema: $schema$10,
+  		$id: $id$10,
   		$vocabulary: $vocabulary$4,
   		$dynamicAnchor: $dynamicAnchor$4,
   		title: title$9,
@@ -6708,20 +6835,20 @@
   	};
   }));
   var core_exports = /* @__PURE__ */ __exportAll({
-  	$defs: () => $defs$2,
+  	$defs: () => $defs$3,
   	$dynamicAnchor: () => $dynamicAnchor$3,
-  	$id: () => $id$8,
-  	$schema: () => $schema$8,
+  	$id: () => $id$9,
+  	$schema: () => $schema$9,
   	$vocabulary: () => $vocabulary$3,
   	default: () => core_default,
   	properties: () => properties$8,
   	title: () => title$8,
   	type: () => type$8
   });
-  var $schema$8, $id$8, $vocabulary$3, $dynamicAnchor$3, title$8, type$8, properties$8, $defs$2, core_default;
+  var $schema$9, $id$9, $vocabulary$3, $dynamicAnchor$3, title$8, type$8, properties$8, $defs$3, core_default;
   var init_core = __esmMin((() => {
-  	$schema$8 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$8 = "https://json-schema.org/draft/2020-12/meta/core";
+  	$schema$9 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$9 = "https://json-schema.org/draft/2020-12/meta/core";
   	$vocabulary$3 = { "https://json-schema.org/draft/2020-12/vocab/core": true };
   	$dynamicAnchor$3 = "meta";
   	title$8 = "Core vocabulary meta-schema";
@@ -6748,7 +6875,7 @@
   			"additionalProperties": { "$dynamicRef": "#meta" }
   		}
   	};
-  	$defs$2 = {
+  	$defs$3 = {
   		"anchorString": {
   			"type": "string",
   			"pattern": "^[A-Za-z_][-A-Za-z0-9._]*$"
@@ -6763,38 +6890,38 @@
   		}
   	};
   	core_default = {
-  		$schema: $schema$8,
-  		$id: $id$8,
+  		$schema: $schema$9,
+  		$id: $id$9,
   		$vocabulary: $vocabulary$3,
   		$dynamicAnchor: $dynamicAnchor$3,
   		title: title$8,
   		type: type$8,
   		properties: properties$8,
-  		$defs: $defs$2
+  		$defs: $defs$3
   	};
   }));
   var format_annotation_exports = /* @__PURE__ */ __exportAll({
   	$dynamicAnchor: () => $dynamicAnchor$2,
-  	$id: () => $id$7,
-  	$schema: () => $schema$7,
+  	$id: () => $id$8,
+  	$schema: () => $schema$8,
   	$vocabulary: () => $vocabulary$2,
   	default: () => format_annotation_default,
   	properties: () => properties$7,
   	title: () => title$7,
   	type: () => type$7
   });
-  var $schema$7, $id$7, $vocabulary$2, $dynamicAnchor$2, title$7, type$7, properties$7, format_annotation_default;
+  var $schema$8, $id$8, $vocabulary$2, $dynamicAnchor$2, title$7, type$7, properties$7, format_annotation_default;
   var init_format_annotation = __esmMin((() => {
-  	$schema$7 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$7 = "https://json-schema.org/draft/2020-12/meta/format-annotation";
+  	$schema$8 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$8 = "https://json-schema.org/draft/2020-12/meta/format-annotation";
   	$vocabulary$2 = { "https://json-schema.org/draft/2020-12/vocab/format-annotation": true };
   	$dynamicAnchor$2 = "meta";
   	title$7 = "Format vocabulary meta-schema for annotation results";
   	type$7 = ["object", "boolean"];
   	properties$7 = { "format": { "type": "string" } };
   	format_annotation_default = {
-  		$schema: $schema$7,
-  		$id: $id$7,
+  		$schema: $schema$8,
+  		$id: $id$8,
   		$vocabulary: $vocabulary$2,
   		$dynamicAnchor: $dynamicAnchor$2,
   		title: title$7,
@@ -6804,18 +6931,18 @@
   }));
   var meta_data_exports = /* @__PURE__ */ __exportAll({
   	$dynamicAnchor: () => $dynamicAnchor$1,
-  	$id: () => $id$6,
-  	$schema: () => $schema$6,
+  	$id: () => $id$7,
+  	$schema: () => $schema$7,
   	$vocabulary: () => $vocabulary$1,
   	default: () => meta_data_default,
   	properties: () => properties$6,
   	title: () => title$6,
   	type: () => type$6
   });
-  var $schema$6, $id$6, $vocabulary$1, $dynamicAnchor$1, title$6, type$6, properties$6, meta_data_default;
+  var $schema$7, $id$7, $vocabulary$1, $dynamicAnchor$1, title$6, type$6, properties$6, meta_data_default;
   var init_meta_data = __esmMin((() => {
-  	$schema$6 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$6 = "https://json-schema.org/draft/2020-12/meta/meta-data";
+  	$schema$7 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$7 = "https://json-schema.org/draft/2020-12/meta/meta-data";
   	$vocabulary$1 = { "https://json-schema.org/draft/2020-12/vocab/meta-data": true };
   	$dynamicAnchor$1 = "meta";
   	title$6 = "Meta-data vocabulary meta-schema";
@@ -6842,8 +6969,8 @@
   		}
   	};
   	meta_data_default = {
-  		$schema: $schema$6,
-  		$id: $id$6,
+  		$schema: $schema$7,
+  		$id: $id$7,
   		$vocabulary: $vocabulary$1,
   		$dynamicAnchor: $dynamicAnchor$1,
   		title: title$6,
@@ -6852,20 +6979,20 @@
   	};
   }));
   var validation_exports = /* @__PURE__ */ __exportAll({
-  	$defs: () => $defs$1,
+  	$defs: () => $defs$2,
   	$dynamicAnchor: () => $dynamicAnchor,
-  	$id: () => $id$5,
-  	$schema: () => $schema$5,
+  	$id: () => $id$6,
+  	$schema: () => $schema$6,
   	$vocabulary: () => $vocabulary,
   	default: () => validation_default,
   	properties: () => properties$5,
   	title: () => title$5,
   	type: () => type$5
   });
-  var $schema$5, $id$5, $vocabulary, $dynamicAnchor, title$5, type$5, properties$5, $defs$1, validation_default;
+  var $schema$6, $id$6, $vocabulary, $dynamicAnchor, title$5, type$5, properties$5, $defs$2, validation_default;
   var init_validation = __esmMin((() => {
-  	$schema$5 = "https://json-schema.org/draft/2020-12/schema";
-  	$id$5 = "https://json-schema.org/draft/2020-12/meta/validation";
+  	$schema$6 = "https://json-schema.org/draft/2020-12/schema";
+  	$id$6 = "https://json-schema.org/draft/2020-12/meta/validation";
   	$vocabulary = { "https://json-schema.org/draft/2020-12/vocab/validation": true };
   	$dynamicAnchor = "meta";
   	title$5 = "Validation vocabulary meta-schema";
@@ -6915,7 +7042,7 @@
   			"additionalProperties": { "$ref": "#/$defs/stringArray" }
   		}
   	};
-  	$defs$1 = {
+  	$defs$2 = {
   		"nonNegativeInteger": {
   			"type": "integer",
   			"minimum": 0
@@ -6941,14 +7068,14 @@
   		}
   	};
   	validation_default = {
-  		$schema: $schema$5,
-  		$id: $id$5,
+  		$schema: $schema$6,
+  		$id: $id$6,
   		$vocabulary,
   		$dynamicAnchor,
   		title: title$5,
   		type: type$5,
   		properties: properties$5,
-  		$defs: $defs$1
+  		$defs: $defs$2
   	};
   }));
   var require_json_schema_2020_12 = /* @__PURE__ */ __commonJSMin(((exports) => {
@@ -7341,66 +7468,6 @@
   	Object.defineProperty(exports, "__esModule", { value: true });
   	exports.default = formatsPlugin;
   }));
-  var JsonSnapshotError = class extends Error {
-  	constructor(kind, dataPath) {
-  		super("JSON snapshot failed.");
-  		this.kind = kind;
-  		this.dataPath = dataPath;
-  	}
-  };
-  function appendPointer(path, key) {
-  	return `${path}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
-  }
-  /** Copy JSON values without invoking accessors, toJSON, or input iterators. */
-  function snapshotJson(value) {
-  	const active = /* @__PURE__ */ new WeakSet();
-  	let remaining = 1e5;
-  	const visit = (input, path, depth) => {
-  		if (--remaining < 0 || depth > 128) throw new JsonSnapshotError("limit", path);
-  		if (input === null || typeof input === "string" || typeof input === "boolean") return input;
-  		if (typeof input === "number" && Number.isFinite(input)) return input;
-  		if (typeof input !== "object" || input === null || active.has(input)) throw new JsonSnapshotError("invalid", path);
-  		const array = Array.isArray(input);
-  		const prototype = Object.getPrototypeOf(input);
-  		if (!array && prototype !== null && prototype !== Object.prototype) throw new JsonSnapshotError("invalid", path);
-  		if (Object.getOwnPropertySymbols(input).length) throw new JsonSnapshotError("invalid", path);
-  		active.add(input);
-  		try {
-  			if (array) {
-  				const length = input.length;
-  				if (!Number.isSafeInteger(length) || length > remaining) throw new JsonSnapshotError("limit", path);
-  				const result = [];
-  				for (let i = 0; i < length; i++) {
-  					const child = appendPointer(path, String(i));
-  					const descriptor = Object.getOwnPropertyDescriptor(input, i);
-  					if (!descriptor || !("value" in descriptor)) throw new JsonSnapshotError("invalid", child);
-  					result.push(visit(descriptor.value, child, depth + 1));
-  				}
-  				for (const key of Object.keys(input)) if (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length) throw new JsonSnapshotError("invalid", appendPointer(path, key));
-  				return result;
-  			}
-  			const result = {};
-  			for (const key of Object.keys(input)) {
-  				const child = appendPointer(path, key);
-  				const descriptor = Object.getOwnPropertyDescriptor(input, key);
-  				if (!descriptor || !("value" in descriptor)) throw new JsonSnapshotError("invalid", child);
-  				Object.defineProperty(result, key, {
-  					value: visit(descriptor.value, child, depth + 1),
-  					enumerable: true,
-  					writable: true,
-  					configurable: true
-  				});
-  			}
-  			return result;
-  		} finally {
-  			active.delete(input);
-  		}
-  	};
-  	return visit(value, "", 0);
-  }
-  function isJsonRecord(value) {
-  	return value !== null && typeof value === "object" && !Array.isArray(value);
-  }
   var import_ajv = require_ajv();
   var import__2020 = require__2020();
   var import_dist = /* @__PURE__ */ __toESM(require_dist(), 1);
@@ -7744,6 +7811,298 @@
   			})])
   		});
   	}
+  }
+  var numberToken = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u;
+  var invalidNumber = Object.freeze({
+  	kind: "invalid",
+  	code: "fixed-number-input-invalid"
+  });
+  /**
+  * Parse a NEW numeric draft according to NP-finite-new-input-v1.
+  * Never apply this to opening/no-op raw values or use it as an owner validator.
+  * Keep the validated token so negative zero, precision and exponent spelling survive.
+  */
+  function parseFixedNumberInput(input) {
+  	if (typeof input === "number") {
+  		if (!Number.isFinite(input)) return invalidNumber;
+  		return Object.freeze({
+  			kind: "valid",
+  			token: Object.is(input, -0) ? "-0" : String(input),
+  			value: input
+  		});
+  	}
+  	if (typeof input !== "string") return invalidNumber;
+  	const token = input.trim();
+  	if (!numberToken.test(token)) return invalidNumber;
+  	const value = Number(token);
+  	return Number.isFinite(value) ? Object.freeze({
+  		kind: "valid",
+  		token,
+  		value
+  	}) : invalidNumber;
+  }
+  var block_editor_fixed_inputs_schema_default = {
+  	$schema: "https://json-schema.org/draft/2020-12/schema",
+  	$id: "https://kubohiroya.github.io/turbowarp-camera-calibration/schemas/block-editor-fixed-inputs.schema.json",
+  	$defs: {
+  		"startCameraCalibration": {
+  			"type": "object",
+  			"properties": {
+  				"COLUMNS": {
+  					"type": "integer",
+  					"minimum": 3,
+  					"maximum": 20
+  				},
+  				"ROWS": {
+  					"type": "integer",
+  					"minimum": 3,
+  					"maximum": 20
+  				},
+  				"SQUARE_METERS": {
+  					"type": "number",
+  					"exclusiveMinimum": 0,
+  					"maximum": 1
+  				},
+  				"MARKER_METERS": {
+  					"type": "number",
+  					"exclusiveMinimum": 0
+  				},
+  				"MAX_ERROR_PX": {
+  					"type": "number",
+  					"exclusiveMinimum": 0,
+  					"maximum": 100
+  				}
+  			},
+  			"additionalProperties": false
+  		},
+  		"measureCameraBoardPose": {
+  			"type": "object",
+  			"properties": {
+  				"COLUMNS": {
+  					"type": "integer",
+  					"minimum": 3,
+  					"maximum": 20
+  				},
+  				"ROWS": {
+  					"type": "integer",
+  					"minimum": 3,
+  					"maximum": 20
+  				},
+  				"SQUARE_METERS": {
+  					"type": "number",
+  					"exclusiveMinimum": 0,
+  					"maximum": 1
+  				},
+  				"MARKER_METERS": {
+  					"type": "number",
+  					"exclusiveMinimum": 0
+  				},
+  				"SCALE_SOURCE": {
+  					"type": "string",
+  					"enum": ["nominal", "measured"]
+  				}
+  			},
+  			"additionalProperties": false
+  		}
+  	}
+  };
+  /** Canonical fixed field fragments; URI is identity only, never fetched. */
+  function fixedInputBundle(opcode, argument) {
+  	const source = {
+  		repository: "turbowarp-camera-calibration",
+  		path: "schemas/block-editor-fixed-inputs.schema.json",
+  		symbol: `#/$defs/${opcode}/properties/${argument}`
+  	};
+  	const definitions = block_editor_fixed_inputs_schema_default.$defs;
+  	return {
+  		identity: {
+  			ownerId: "turbowarp-camera-calibration",
+  			contractId: "fixed-inputs",
+  			revision: "1",
+  			variantId: opcode + "." + argument
+  		},
+  		dialect: "2020-12",
+  		root: {
+  			retrievalUri: block_editor_fixed_inputs_schema_default.$id,
+  			document: definitions[opcode].properties[argument],
+  			artifact: {
+  				role: "canonical-schema",
+  				source
+  			}
+  		},
+  		resources: [],
+  		provenance: {
+  			canonicalSources: [source, ...[
+  				{
+  					"repository": "turbowarp-camera-calibration",
+  					"path": "src/calibration/controller.ts",
+  					"symbol": "normalizeBoard / normalizeStartOptions / boardMarkerCount"
+  				},
+  				{
+  					"repository": "turbowarp-camera-calibration",
+  					"path": "src/board/aruco.ts",
+  					"symbol": "DICT_4X4_50"
+  				},
+  				{
+  					"repository": "turbowarp-camera-calibration",
+  					"path": "src/extension.ts",
+  					"symbol": "readScaleSource"
+  				}
+  			]],
+  			generatedFiles: [{
+  				repository: "turbowarp-camera-calibration",
+  				path: "docs/schemas/block-editor-fixed-inputs.schema.json"
+  			}],
+  			generationSources: [{
+  				repository: "turbowarp-camera-calibration",
+  				path: "scripts/generate-fixed-input-docs.mjs"
+  			}],
+  			referenceSchemas: []
+  		}
+  	};
+  }
+  var invalid$1 = () => [{ message: "Invalid fixed input." }];
+  function number(value) {
+  	if (typeof value !== "number" && typeof value !== "string" || typeof value === "string" && value.trim() === "") throw new TypeError("Unrepresentable numeric literal.");
+  	const result = Number(value);
+  	if (!Number.isFinite(result)) throw new TypeError("Nonfinite numeric literal.");
+  	return result;
+  }
+  function snapshotNumber(snapshot, argument) {
+  	const slot = snapshot.arguments[argument];
+  	if (slot?.kind !== "literal") throw new TypeError("A related literal is required.");
+  	return number(slot.value);
+  }
+  function numericBinding(opcode, argument) {
+  	return {
+  		argument,
+  		schemaBundle: fixedInputBundle(opcode, argument),
+  		control: {
+  			label: argument,
+  			kind: "number"
+  		},
+  		read: number,
+  		encode(value) {
+  			const parsed = parseFixedNumberInput(value);
+  			if (parsed.kind !== "valid") throw new TypeError("Invalid numeric token.");
+  			return parsed.token;
+  		},
+  		validateCandidate(candidate, _context, finalSnapshot) {
+  			try {
+  				number(candidate);
+  				return ownerCheck(opcode, argument, candidate, finalSnapshot) ? [] : invalid$1();
+  			} catch {
+  				return invalid$1();
+  			}
+  		}
+  	};
+  }
+  function enumBinding(opcode, argument, choices, normalization) {
+  	const project = (value) => {
+  		if (typeof value !== "string") return value;
+  		const normalized = normalization === "none" ? value : normalization === "trim" ? value.trim() : value.trim().toLowerCase();
+  		return choices.includes(normalized) ? normalized : value;
+  	};
+  	return {
+  		argument,
+  		schemaBundle: fixedInputBundle(opcode, argument),
+  		control: {
+  			label: argument,
+  			kind: "enum",
+  			choices: choices.map((value) => ({ value }))
+  		},
+  		read: project,
+  		encode(value) {
+  			if (typeof value !== "string" || !choices.includes(value)) throw new TypeError("Choose a known value.");
+  			return value;
+  		},
+  		validateCandidate(candidate, _context, finalSnapshot) {
+  			try {
+  				return typeof candidate === "string" && choices.includes(candidate) && ownerCheck(opcode, argument, candidate, finalSnapshot) ? [] : invalid$1();
+  			} catch {
+  				return invalid$1();
+  			}
+  		}
+  	};
+  }
+  function ownerCheck(_opcode, argument, candidate, snapshot) {
+  	if (argument === "COLUMNS" || argument === "ROWS") {
+  		const columns = argument === "COLUMNS" ? number(candidate) : snapshotNumber(snapshot, "COLUMNS");
+  		const rows = argument === "ROWS" ? number(candidate) : snapshotNumber(snapshot, "ROWS");
+  		return Number.isInteger(columns) && Number.isInteger(rows) && columns >= 3 && columns <= 20 && rows >= 3 && rows <= 20 && Math.floor((columns + 1) * (rows + 1) / 2) <= DICT_4X4_50.length;
+  	}
+  	if (argument === "MARKER_METERS" || argument === "SQUARE_METERS") {
+  		const marker = argument === "MARKER_METERS" ? number(candidate) : snapshotNumber(snapshot, "MARKER_METERS");
+  		const square = argument === "SQUARE_METERS" ? number(candidate) : snapshotNumber(snapshot, "SQUARE_METERS");
+  		return marker > 0 && square > 0 && square <= 1 && marker < square;
+  	}
+  	return true;
+  }
+  var extensionId = "kubohiroyacameracalibration";
+  var validationContext = () => ({
+  	consumerId: "turbowarp-camera-calibration",
+  	nowMs: 0,
+  	settings: null
+  });
+  var fixedInputEditors = [{
+  	apiVersion: 1,
+  	extensionId,
+  	editorId: "startCameraCalibration-fixed",
+  	opcodes: [`${extensionId}_startCameraCalibration`],
+  	contractId: "turbowarp-camera-calibration/startCameraCalibration",
+  	contractRevision: "1",
+  	validationContext,
+  	readOnlyArguments: [],
+  	bindings: [
+  		numericBinding("startCameraCalibration", "COLUMNS"),
+  		numericBinding("startCameraCalibration", "ROWS"),
+  		numericBinding("startCameraCalibration", "SQUARE_METERS"),
+  		numericBinding("startCameraCalibration", "MARKER_METERS"),
+  		numericBinding("startCameraCalibration", "MAX_ERROR_PX")
+  	]
+  }, {
+  	apiVersion: 1,
+  	extensionId,
+  	editorId: "measureCameraBoardPose-fixed",
+  	opcodes: [`${extensionId}_measureCameraBoardPose`],
+  	contractId: "turbowarp-camera-calibration/measureCameraBoardPose",
+  	contractRevision: "1",
+  	validationContext,
+  	readOnlyArguments: [],
+  	bindings: [
+  		numericBinding("measureCameraBoardPose", "COLUMNS"),
+  		numericBinding("measureCameraBoardPose", "ROWS"),
+  		numericBinding("measureCameraBoardPose", "SQUARE_METERS"),
+  		numericBinding("measureCameraBoardPose", "MARKER_METERS"),
+  		enumBinding("measureCameraBoardPose", "SCALE_SOURCE", ["nominal", "measured"], "trim")
+  	]
+  }];
+  /** Register metadata only; the GUI startup capability owns editor activation. */
+  function registerFixedInputEditors(scratch, definitions, runtimeOverride) {
+  	const host = scratch;
+  	const api = host.gui?.blockEditors;
+  	if (!definitions.length || api?.apiVersion !== 1 || typeof api.registerFixedInputEditor !== "function") return () => {};
+  	const runtime = runtimeOverride ?? host.vm?.runtime;
+  	const removers = [];
+  	let active = true;
+  	const dispose = () => {
+  		if (!active) return;
+  		active = false;
+  		runtime?.off?.("RUNTIME_DISPOSED", dispose);
+  		for (const remove of removers.splice(0).reverse()) remove();
+  	};
+  	try {
+  		for (const definition of definitions) {
+  			const remove = api.registerFixedInputEditor.call(api, definition);
+  			if (typeof remove !== "function") throw new TypeError("Invalid fixed input registration disposer.");
+  			removers.push(remove);
+  		}
+  		runtime?.on?.("RUNTIME_DISPOSED", dispose);
+  	} catch (error) {
+  		dispose();
+  		throw error;
+  	}
+  	return dispose;
   }
   function deepFreeze(value) {
   	if (value !== null && typeof value === "object") {
@@ -11956,73 +12315,6 @@
   	return Math.hypot(from.x - to.x, from.y - to.y);
   }
   /**
-  * The marker patterns of OpenCV's `DICT_4X4_50`.
-  *
-  * Fifty markers of sixteen bits: a hundred bytes, which is why the board can be
-  * drawn in the page at all. The alternative was shipping OpenCV to the display
-  * side to ask it, and OpenCV is eleven megabytes.
-  *
-  * Extracted from `cv.getPredefinedDictionary(cv.DICT_4X4_50)` rather than
-  * transcribed, and checked against a board OpenCV drew itself: the first ten
-  * markers of a 10x7 board read back bit for bit. A dictionary is an arbitrary
-  * table, so a copy made any other way would be a copy nothing could check.
-  *
-  * Each entry is the 4x4 data grid, row-major, most significant bit at the top
-  * left, a set bit meaning white.
-  */
-  var DICT_4X4_50 = [
-  	46386,
-  	3994,
-  	13101,
-  	39238,
-  	21662,
-  	31181,
-  	40494,
-  	50418,
-  	65242,
-  	53078,
-  	63889,
-  	4519,
-  	3767,
-  	10767,
-  	9393,
-  	9790,
-  	18021,
-  	26112,
-  	27742,
-  	30383,
-  	34443,
-  	45099,
-  	52437,
-  	56706,
-  	65095,
-  	38001,
-  	44260,
-  	42324,
-  	8483,
-  	13423,
-  	17429,
-  	22450,
-  	40655,
-  	61643,
-  	2222,
-  	2345,
-  	6261,
-  	1279,
-  	3574,
-  	7258,
-  	5912,
-  	10792,
-  	12940,
-  	14514,
-  	9448,
-  	12011,
-  	11583,
-  	19300,
-  	20526,
-  	20499
-  ];
-  /**
   * How long a just-acquired camera is given to produce its first frame.
   *
   * Camera Source reports a camera as started once `play()` resolves, and for a
@@ -13691,10 +13983,12 @@
   }
   var CameraCalibrationExtension = class {
   	constructor(options = {}) {
+  		this.removeFixedEditors = () => {};
   		this.handleProjectBoundary = () => {
   			this.controller.cancelAll();
   		};
   		this.handleDisposed = () => {
+  			this.removeFixedEditors();
   			this.removeSourceEditors();
   			if (this.runtime["kubohiroyaCameraCalibrationCapability"] === this.capability) delete this.runtime[runtimeCapabilityKey];
   			this.runtime.off?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
@@ -13704,16 +13998,26 @@
   		};
   		this.removeSourceEditors = registerSourceEditors(Scratch, options.nowMilliseconds);
   		this.runtime = options.runtime ?? Scratch.vm.runtime;
-  		const nowMilliseconds = options.nowMilliseconds;
-  		this.controller = new CameraCalibrationController({
-  			runtime: this.runtime,
-  			backend: options.backend ?? openCvBackendFactory,
-  			...nowMilliseconds ? { nowMilliseconds } : {}
-  		});
-  		this.runtime[runtimeCapabilityKey] = this.createCapability();
-  		this.runtime.on?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
-  		this.runtime.on?.("PROJECT_LOADED", this.handleProjectBoundary);
-  		this.runtime.on?.("RUNTIME_DISPOSED", this.handleDisposed);
+  		try {
+  			this.removeFixedEditors = registerFixedInputEditors(Scratch, fixedInputEditors, this.runtime);
+  			const nowMilliseconds = options.nowMilliseconds;
+  			this.controller = new CameraCalibrationController({
+  				runtime: this.runtime,
+  				backend: options.backend ?? openCvBackendFactory,
+  				...nowMilliseconds ? { nowMilliseconds } : {}
+  			});
+  			this.runtime[runtimeCapabilityKey] = this.createCapability();
+  			this.runtime.on?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
+  			this.runtime.on?.("PROJECT_LOADED", this.handleProjectBoundary);
+  			this.runtime.on?.("RUNTIME_DISPOSED", this.handleDisposed);
+  		} catch (error) {
+  			this.removeFixedEditors();
+  			this.removeSourceEditors();
+  			this.runtime.off?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
+  			this.runtime.off?.("PROJECT_LOADED", this.handleProjectBoundary);
+  			this.runtime.off?.("RUNTIME_DISPOSED", this.handleDisposed);
+  			throw error;
+  		}
   	}
   	getInfo() {
   		return {
