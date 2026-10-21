@@ -9843,7 +9843,6 @@
   		data
   	};
   }
-  Object.fromEntries(Object.entries(cameraProfileSchemaBundles).map(([key, bundle]) => [key, compileSchemaBundle(bundle)]));
   var CAMERA_INTRINSIC_PROFILE_SCHEMA = "twcs/camera-intrinsics";
   /** The application-specific format this contract replaces. Read for migration, never written. */
   var LEGACY_CALIBRATION_SCHEMA = "twrmc/camera-calibration";
