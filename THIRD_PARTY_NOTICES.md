@@ -35,7 +35,7 @@ version `4.4.2`, distributed under the Apache License 2.0.
 
 The contract this extension talks to is imported from
 [`@kubohiroya/turbowarp-camera-source`](https://github.com/kubohiroya/turbowarp-camera-source) at the
-exact npm version `0.19.2`
+exact npm version `0.19.3`
 (selected Git base `e23f2e1e3db28c5b7e0290949cf99004b689d90c`, packaged as a local release overlay), through its `./runtime` sub-entry: the camera lease, the runtime capability,
 and the intrinsic profile document. That runtime entry contains declarations and a few string
 constants; its built form imports nothing, so using this entry adds no camera controller or

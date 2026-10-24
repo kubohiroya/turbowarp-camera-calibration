@@ -1,6 +1,7 @@
 allowBuilds:
   esbuild: false
 minimumReleaseAgeExclude:
+  - '@kubohiroya/turbowarp-camera-source@0.19.3'
   - '@kubohiroya/turbowarp-app-shell@0.3.1'
   - '@kubohiroya/turbowarp-camera-source@0.19.1'
   - '@kubohiroya/turbowarp-camera-source@0.19.2'
