@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@kubohiroya/turbowarp-camera-source':
-        specifier: 0.19.2
-        version: 0.19.2
+        specifier: 0.19.3
+        version: 0.19.3
       '@kubohiroya/turbowarp-extension-data-editor':
         specifier: 0.2.1
         version: 0.2.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -128,8 +128,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kubohiroya/turbowarp-camera-source@0.19.2':
-    resolution: {integrity: sha512-h2N8BSrYXGNTOPUeLNitIPLGXxqP6b2FGUDxykz4SGM5egYoZ56t40DIppsY7hI1JCkvf731nTFF6iWhal7zEg==}
+  '@kubohiroya/turbowarp-camera-source@0.19.3':
+    resolution: {integrity: sha512-ArMCNkyD7NjskJGh1F4nPBmQaQ3V/cVBgU3M7+/YJNbo6NYbrSoj10PSMMMWSVdTKu3RTtb3ziT81EIXx41weQ==}
     engines: {node: '>=22.18.0'}
 
   '@kubohiroya/turbowarp-extension-data-editor@0.2.1':
@@ -1126,7 +1126,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@kubohiroya/turbowarp-camera-source@0.19.2': {}
+  '@kubohiroya/turbowarp-camera-source@0.19.3': {}
 
   '@kubohiroya/turbowarp-extension-data-editor@0.2.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
