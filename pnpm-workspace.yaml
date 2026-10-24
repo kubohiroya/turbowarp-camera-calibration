@@ -3,6 +3,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@kubohiroya/turbowarp-app-shell@0.3.1'
   - '@kubohiroya/turbowarp-camera-source@0.19.1'
+  - '@kubohiroya/turbowarp-camera-source@0.19.2'
 
   - '@kubohiroya/turbowarp-camera-source@0.17.1 || 0.19.0'
   - '@kubohiroya/turbowarp-extension-data-editor@0.2.1'
