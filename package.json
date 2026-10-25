@@ -39,6 +39,7 @@
   "unpkg": "./dist/camera-calibration.js",
   "jsdelivr": "./dist/camera-calibration.js",
   "files": [
+    "assets/",
     "dist/",
     "vendor/",
     "lib/",
