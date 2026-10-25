@@ -13,3 +13,8 @@ export function isExactDependencyPin(name: string, specifier: string): boolean {
   return prefix !== undefined && specifier.startsWith(prefix) &&
     /^[\da-f]{40}$/u.test(specifier.slice(prefix.length));
 }
+
+export function isReviewedFamilyCaret(name: string, specifier: string): boolean {
+  return Object.hasOwn(GIT_ARTIFACT_PREFIXES, name) &&
+    /^\^\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/iu.test(specifier);
+}
