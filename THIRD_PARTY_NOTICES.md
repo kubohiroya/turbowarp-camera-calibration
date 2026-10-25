@@ -54,8 +54,8 @@ package's explicit editor entry and optional Source/Form registration.
 
 The pure Schema engine and diagnostic helpers used by the explicit `./editor-schema` entry
 and optional Source/Form registration
-come from `@kubohiroya/turbowarp-extension-data-editor/schema`, at exact npm version `0.2.1`
-(selected Git base `485f0e550e622235624b5e9176820161aeeba252`, packaged as a working-tree release overlay).
+come from `@kubohiroya/turbowarp-extension-data-editor/schema`, at exact npm version `0.3.3`
+(resolved by the committed `pnpm-lock.yaml`).
 They do not introduce the RJSF UI into the runtime bundle. Extension Data Editor is distributed
 under the Mozilla Public License 2.0.
 
