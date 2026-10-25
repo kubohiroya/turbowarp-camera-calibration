@@ -1,5 +1,7 @@
 # TurboWarp-Camera-Calibration
 
+<img src="assets/block-icon.svg" alt="" width="48" height="48">
+
 [English](README.md) | [日本語](README.ja.md)
 
 A TurboWarp extension that calibrates a camera shared through
