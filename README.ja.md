@@ -2,7 +2,7 @@
 
 <img src="assets/block-icon.svg" alt="" width="48" height="48">
 
-[English](README.md) | [日本語](README.ja.md)
+[English](README.md) | 日本語
 
 [TurboWarp-Camera-Source](https://github.com/kubohiroya/turbowarp-camera-source)
 で共有しているカメラをChArUcoボードで校正し、得られた内部校正プロファイルを
