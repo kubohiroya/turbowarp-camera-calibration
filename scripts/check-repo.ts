@@ -1,7 +1,7 @@
 import {access, readFile} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {isExactDependencyPin} from './dependency-pin.ts';
+import {isExactDependencyPin, isReviewedFamilyCaret} from './dependency-pin.ts';
 
 interface PackageMetadata {
   name: string;
@@ -67,7 +67,7 @@ checkPolicy();
 checkPackageMetadata();
 checkReadmes();
 checkLicense();
-checkThirdPartyBundle();
+await checkThirdPartyBundle();
 checkGeneratedArtifacts();
 await checkPackContents();
 
@@ -167,7 +167,7 @@ function checkLicense() {
   }
 }
 
-function checkThirdPartyBundle() {
+async function checkThirdPartyBundle() {
   const dependencies = Object.entries(packageMetadata.dependencies ?? {});
   if (!policy.exceptions.thirdPartyBundle) {
     if (dependencies.length > 0) {
@@ -179,16 +179,27 @@ function checkThirdPartyBundle() {
     errors.push('repo-policy.json records a thirdPartyBundle exception but no runtime dependency is bundled');
   }
   for (const [name, range] of dependencies) {
-    // Both the bundle and the explicit editor entry must resolve reproducibly.
-    // Only the two reviewed first-party artifacts may use immutable Git pins.
-    if (!isExactDependencyPin(name, range)) {
-      errors.push(`package.json dependency ${name} must pin an exact version or approved Git artifact`);
+    let noticePin = range;
+    if (isReviewedFamilyCaret(name, range)) {
+      // CI installs with the frozen lockfile; notices describe the installed artifact.
+      const installed = JSON.parse(await readFile(`node_modules/${name}/package.json`, 'utf8')) as {
+        name?: string;
+        version?: string;
+      };
+      if (installed.name !== name || typeof installed.version !== 'string' ||
+          !isExactDependencyPin(name, installed.version)) {
+        errors.push(`Installed dependency ${name} must report its exact package version`);
+        continue;
+      }
+      noticePin = installed.version;
+    } else if (!isExactDependencyPin(name, range)) {
+      errors.push(`package.json dependency ${name} must use an exact pin or a reviewed family caret range`);
     }
     if (!notices.includes(name)) {
       errors.push(`THIRD_PARTY_NOTICES.md must record ${name}`);
     }
-    if (!notices.includes(range)) {
-      errors.push(`THIRD_PARTY_NOTICES.md must record the pinned ${name} version ${range}`);
+    if (!notices.includes(noticePin)) {
+      errors.push(`THIRD_PARTY_NOTICES.md must record the pinned ${name} version ${noticePin}`);
     }
   }
   if (!readme.includes('THIRD_PARTY_NOTICES.md')) {

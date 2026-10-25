@@ -1,7 +1,18 @@
 import {describe, expect, it} from 'vitest';
-import {isExactDependencyPin} from '../scripts/dependency-pin.js';
+import {isExactDependencyPin, isReviewedFamilyCaret} from '../scripts/dependency-pin.js';
 
 describe('repository dependency pins', () => {
+  it('allows caret ranges only for the two reviewed family packages', () => {
+    expect(isReviewedFamilyCaret('@kubohiroya/turbowarp-camera-source', '^0.19.3')).toBe(true);
+    expect(isReviewedFamilyCaret('@kubohiroya/turbowarp-extension-data-editor', '^0.2.1')).toBe(true);
+    for (const name of ['comlink', '@kubohiroya/other', '__proto__']) {
+      expect(isReviewedFamilyCaret(name, '^0.19.3'), name).toBe(false);
+    }
+    for (const specifier of ['~0.19.3', '^0.19.3 || 1.0.0', '^latest', '^0.19.3anything']) {
+      expect(isReviewedFamilyCaret('@kubohiroya/turbowarp-camera-source', specifier), specifier).toBe(false);
+    }
+  });
+
   it('accepts exact package versions and both reviewed immutable Git artifacts', () => {
     expect(isExactDependencyPin('comlink', '4.4.2')).toBe(true);
     for (const name of ['turbowarp-extension-data-editor', 'turbowarp-camera-source']) {
