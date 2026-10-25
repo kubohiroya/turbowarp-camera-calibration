@@ -12,10 +12,10 @@ importers:
   .:
     dependencies:
       '@kubohiroya/turbowarp-camera-source':
-        specifier: 0.19.3
+        specifier: "^0.19.3"
         version: 0.19.3
       '@kubohiroya/turbowarp-extension-data-editor':
-        specifier: 0.2.1
+        specifier: "^0.2.1"
         version: 0.2.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       comlink:
         specifier: 4.4.2
@@ -25,10 +25,10 @@ importers:
         specifier: ^9.39.5
         version: 9.39.5
       '@kubohiroya/turbowarp-extension-manifest':
-        specifier: 0.3.2
+        specifier: "^0.3.2"
         version: 0.3.2
       '@kubohiroya/vite-plugin-turbowarp-extension':
-        specifier: 0.6.1
+        specifier: "^0.6.1"
         version: 0.6.1(vite@8.3.0(@types/node@24.13.4)(yaml@2.9.1))
       '@types/node':
         specifier: ^24.13.3
