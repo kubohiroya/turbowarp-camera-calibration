@@ -97,7 +97,7 @@
   },
   "dependencies": {
     "comlink": "4.4.2",
-    "@kubohiroya/turbowarp-extension-data-editor": "^0.2.1",
+    "@kubohiroya/turbowarp-extension-data-editor": "^0.3.3",
     "@kubohiroya/turbowarp-camera-source": "^0.19.3"
   },
   "sideEffects": [
