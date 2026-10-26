@@ -160,6 +160,7 @@ Use Node.js `<minimum version>` and the pnpm version declared by
 `packageManager`.
 
 ```bash
+npm install --global corepack@latest
 corepack enable
 pnpm install --frozen-lockfile
 pnpm check

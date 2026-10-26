@@ -733,9 +733,10 @@ instruct users to replace JavaScript alone when stored identifiers have changed.
 
 ## Development
 
-Use Node.js `>=22.18.0` and the pnpm version declared by `packageManager`.
+Use Node.js `>=24` and the pnpm version declared by `packageManager`.
 
 ```bash
+npm install --global corepack@latest
 corepack enable
 pnpm install --frozen-lockfile
 pnpm check

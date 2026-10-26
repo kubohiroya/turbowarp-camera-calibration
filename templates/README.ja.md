@@ -149,6 +149,7 @@ extension IDまたはopcode変更時はschema-aware migrationを説明し、保�
 `engines`のNode.jsと、`packageManager`に宣言したpnpmを使用します。
 
 ```bash
+npm install --global corepack@latest
 corepack enable
 pnpm install --frozen-lockfile
 pnpm check
