@@ -35,7 +35,7 @@ version `4.4.2`, distributed under the Apache License 2.0.
 
 The contract this extension talks to is imported from
 [`@kubohiroya/turbowarp-camera-source`](https://github.com/kubohiroya/turbowarp-camera-source) at the
-exact npm version `0.20.0`
+exact npm version `0.21.0`
 (resolved by the committed `pnpm-lock.yaml`), through its `./runtime` sub-entry: the camera lease, the runtime capability,
 and the intrinsic profile document. That runtime entry contains declarations and a few string
 constants; its built form imports nothing, so using this entry adds no camera controller or
@@ -54,7 +54,7 @@ package's explicit editor entry and optional Source/Form registration.
 
 The pure Schema engine and diagnostic helpers used by the explicit `./editor-schema` entry
 and optional Source/Form registration
-come from `@kubohiroya/turbowarp-extension-data-editor/schema`, at exact npm version `0.3.4`
+come from `@kubohiroya/turbowarp-extension-data-editor/schema`, at exact npm version `0.4.0`
 (resolved by the committed `pnpm-lock.yaml`).
 They do not introduce the RJSF UI into the runtime bundle. Extension Data Editor is distributed
 under the Mozilla Public License 2.0.
