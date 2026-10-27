@@ -10,6 +10,12 @@
 
 **利用ガイド:** [English](https://kubohiroya.github.io/turbowarp-camera-calibration/)
 
+## 最小デモ
+
+[TurboWarp Editor](https://turbowarp.org/editor?project_url=https%3A%2F%2Fkubohiroya.github.io%2Fturbowarp-camera-calibration%2Fsamples%2Fcapture-calibration-board.sb3) · [SB3](https://kubohiroya.github.io/turbowarp-camera-calibration/samples/capture-calibration-board.sb3) · [操作・要件・未検証範囲](samples/README.md)
+
+緑旗は状態表示のみです。**Start**を明示クリックするとカメラ許可を要求し、**Stop**でカメラを解放します。カメラ・HTTPS・許可が必要です。実カメラによる取得・認識・校正の成功は未検証です。自動検証は無音で初期状態と停止を確認しています。
+
 ## できること
 
 - Camera Sourceからleaseしたカメラに対して、実際の撮影解像度でChArUcoボードの校正セッションを実行します。

@@ -1,0 +1,9 @@
+import {readFile, writeFile} from 'node:fs/promises';
+import {stripTypeScriptTypes} from 'node:module';
+const root = new URL('../', import.meta.url);
+const source = (await readFile(new URL('src/board/pattern.ts', root), 'utf8')).replace("'./aruco.js'", JSON.stringify(new URL('src/board/aruco.ts', root).href));
+const {patternSvg, printedCellMillimetres} = await import(`data:application/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+const board = {columns: 9, rows: 6};
+const svg = patternSvg(board).replace('width="100%" height="100%"', 'width="297mm" height="210mm"');
+await writeFile(new URL('samples/capture-calibration-board/charuco-board.svg', root), `${svg}\n`);
+console.log(`A4 landscape, square ${printedCellMillimetres(board)} mm; marker ${printedCellMillimetres(board)*0.72} mm`);
