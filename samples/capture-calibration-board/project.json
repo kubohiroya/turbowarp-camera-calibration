@@ -1,0 +1,1046 @@
+{
+  "targets": [
+    {
+      "isStage": true,
+      "name": "Stage",
+      "variables": {
+        "sample-state": [
+          "State",
+          "Not started"
+        ],
+        "busy": [
+          "Starting / scanning",
+          0
+        ],
+        "running": [
+          "Camera running",
+          false
+        ],
+        "width": [
+          "Frame width",
+          0
+        ],
+        "height": [
+          "Frame height",
+          0
+        ],
+        "error": [
+          "Camera error",
+          ""
+        ],
+        "cal-state": [
+          "Calibration state",
+          ""
+        ],
+        "count": [
+          "Accepted samples",
+          0
+        ],
+        "guidance": [
+          "Guidance",
+          ""
+        ],
+        "cal-error": [
+          "Calibration error",
+          ""
+        ]
+      },
+      "lists": {},
+      "broadcasts": {},
+      "blocks": {
+        "block1": {
+          "opcode": "data_setvariableto",
+          "next": "block2",
+          "parent": "block3",
+          "inputs": {
+            "VALUE": [
+              1,
+              [
+                10,
+                "Ready"
+              ]
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "State",
+              "sample-state"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block2": {
+          "opcode": "data_setvariableto",
+          "next": "block22",
+          "parent": "block1",
+          "inputs": {
+            "VALUE": [
+              1,
+              [
+                4,
+                "0"
+              ]
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Starting / scanning",
+              "busy"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block3": {
+          "opcode": "kubohiroyacameracalibration_cleanupCameraCalibration",
+          "next": "block1",
+          "parent": "block4",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block4": {
+          "opcode": "kubohiroyacamerasource_stopSharedCamera",
+          "next": "block3",
+          "parent": "block23",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block5": {
+          "opcode": "kubohiroyacamerasource_isCameraRunning",
+          "next": null,
+          "parent": "block6",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block6": {
+          "opcode": "data_setvariableto",
+          "next": "block8",
+          "parent": "block22",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block5"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Camera running",
+              "running"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block7": {
+          "opcode": "kubohiroyacamerasource_cameraFrameWidth",
+          "next": null,
+          "parent": "block8",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block8": {
+          "opcode": "data_setvariableto",
+          "next": "block10",
+          "parent": "block6",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block7"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Frame width",
+              "width"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block9": {
+          "opcode": "kubohiroyacamerasource_cameraFrameHeight",
+          "next": null,
+          "parent": "block10",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block10": {
+          "opcode": "data_setvariableto",
+          "next": "block12",
+          "parent": "block8",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block9"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Frame height",
+              "height"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block11": {
+          "opcode": "kubohiroyacamerasource_cameraErrorCode",
+          "next": null,
+          "parent": "block12",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block12": {
+          "opcode": "data_setvariableto",
+          "next": "block14",
+          "parent": "block10",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block11"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Camera error",
+              "error"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block13": {
+          "opcode": "kubohiroyacameracalibration_cameraCalibrationState",
+          "next": null,
+          "parent": "block14",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block14": {
+          "opcode": "data_setvariableto",
+          "next": "block16",
+          "parent": "block12",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block13"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Calibration state",
+              "cal-state"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block15": {
+          "opcode": "kubohiroyacameracalibration_cameraCalibrationSampleCount",
+          "next": null,
+          "parent": "block16",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block16": {
+          "opcode": "data_setvariableto",
+          "next": "block18",
+          "parent": "block14",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block15"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Accepted samples",
+              "count"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block17": {
+          "opcode": "kubohiroyacameracalibration_cameraCalibrationGuidance",
+          "next": null,
+          "parent": "block18",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block18": {
+          "opcode": "data_setvariableto",
+          "next": "block20",
+          "parent": "block16",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block17"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Guidance",
+              "guidance"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block19": {
+          "opcode": "kubohiroyacameracalibration_cameraCalibrationErrorCode",
+          "next": null,
+          "parent": "block20",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block20": {
+          "opcode": "data_setvariableto",
+          "next": "block21",
+          "parent": "block18",
+          "inputs": {
+            "VALUE": [
+              2,
+              "block19"
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Calibration error",
+              "cal-error"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block21": {
+          "opcode": "control_wait",
+          "next": null,
+          "parent": "block20",
+          "inputs": {
+            "DURATION": [
+              1,
+              [
+                4,
+                "0.1"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block22": {
+          "opcode": "control_forever",
+          "next": null,
+          "parent": "block2",
+          "inputs": {
+            "SUBSTACK": [
+              2,
+              "block6"
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block23": {
+          "opcode": "event_whenflagclicked",
+          "next": "block4",
+          "parent": null,
+          "inputs": {},
+          "fields": {},
+          "shadow": false,
+          "topLevel": true,
+          "x": 30,
+          "y": 30
+        }
+      },
+      "comments": {},
+      "currentCostume": 0,
+      "costumes": [
+        {
+          "name": "backdrop",
+          "assetId": "",
+          "md5ext": "backdrop.svg",
+          "dataFormat": "svg",
+          "rotationCenterX": 240,
+          "rotationCenterY": 180
+        }
+      ],
+      "sounds": [],
+      "volume": 0,
+      "layerOrder": 0,
+      "tempo": 60,
+      "videoTransparency": 50,
+      "videoState": "off",
+      "textToSpeechLanguage": null
+    },
+    {
+      "isStage": false,
+      "name": "Start",
+      "variables": {},
+      "lists": {},
+      "broadcasts": {},
+      "blocks": {
+        "block1": {
+          "opcode": "data_setvariableto",
+          "next": "block2",
+          "parent": "block11",
+          "inputs": {
+            "VALUE": [
+              1,
+              [
+                4,
+                "1"
+              ]
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Starting / scanning",
+              "busy"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block2": {
+          "opcode": "kubohiroyacamerasource_startSharedCamera",
+          "next": "block7",
+          "parent": "block1",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ],
+            "DEVICE_ID": [
+              1,
+              [
+                10,
+                ""
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block3": {
+          "opcode": "kubohiroyacamerasource_showCameraPreview",
+          "next": "block4",
+          "parent": "block7",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ],
+            "PREVIEW_FLIP": [
+              1,
+              [
+                10,
+                "none"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block4": {
+          "opcode": "kubohiroyacameracalibration_startCameraCalibration",
+          "next": "block5",
+          "parent": "block3",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ],
+            "CALIBRATION_ID": [
+              1,
+              [
+                10,
+                "sample-calibration"
+              ]
+            ],
+            "COLUMNS": [
+              1,
+              [
+                4,
+                "9"
+              ]
+            ],
+            "ROWS": [
+              1,
+              [
+                4,
+                "6"
+              ]
+            ],
+            "SQUARE_METERS": [
+              1,
+              [
+                4,
+                "0.02324"
+              ]
+            ],
+            "MARKER_METERS": [
+              1,
+              [
+                4,
+                "0.0167328"
+              ]
+            ],
+            "MAX_ERROR_PX": [
+              1,
+              [
+                4,
+                "1.5"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block5": {
+          "opcode": "kubohiroyacameracalibration_startAutomaticCameraCalibration",
+          "next": null,
+          "parent": "block4",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block6": {
+          "opcode": "kubohiroyacamerasource_isCameraRunning",
+          "next": null,
+          "parent": "block7",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block7": {
+          "opcode": "control_if",
+          "next": "block8",
+          "parent": "block2",
+          "inputs": {
+            "CONDITION": [
+              2,
+              "block6"
+            ],
+            "SUBSTACK": [
+              2,
+              "block3"
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block8": {
+          "opcode": "data_setvariableto",
+          "next": null,
+          "parent": "block7",
+          "inputs": {
+            "VALUE": [
+              1,
+              [
+                4,
+                "0"
+              ]
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Starting / scanning",
+              "busy"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block9": {
+          "opcode": "data_variable",
+          "next": null,
+          "parent": "block10",
+          "inputs": {},
+          "fields": {
+            "VARIABLE": [
+              "Starting / scanning",
+              "busy"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block10": {
+          "opcode": "operator_equals",
+          "next": null,
+          "parent": "block11",
+          "inputs": {
+            "OPERAND1": [
+              2,
+              "block9"
+            ],
+            "OPERAND2": [
+              1,
+              [
+                4,
+                "0"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block11": {
+          "opcode": "control_if",
+          "next": null,
+          "parent": "block12",
+          "inputs": {
+            "CONDITION": [
+              2,
+              "block10"
+            ],
+            "SUBSTACK": [
+              2,
+              "block1"
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block12": {
+          "opcode": "event_whenthisspriteclicked",
+          "next": "block11",
+          "parent": null,
+          "inputs": {},
+          "fields": {},
+          "shadow": false,
+          "topLevel": true,
+          "x": 30,
+          "y": 30
+        }
+      },
+      "comments": {},
+      "currentCostume": 0,
+      "costumes": [
+        {
+          "name": "Start",
+          "assetId": "",
+          "md5ext": "start.svg",
+          "dataFormat": "svg",
+          "rotationCenterX": 72,
+          "rotationCenterY": 24
+        }
+      ],
+      "sounds": [],
+      "volume": 0,
+      "layerOrder": 1,
+      "visible": true,
+      "x": -100,
+      "y": -110,
+      "size": 100,
+      "direction": 90,
+      "draggable": false,
+      "rotationStyle": "don't rotate"
+    },
+    {
+      "isStage": false,
+      "name": "Stop",
+      "variables": {},
+      "lists": {},
+      "broadcasts": {},
+      "blocks": {
+        "block1": {
+          "opcode": "kubohiroyacameracalibration_cleanupCameraCalibration",
+          "next": "block2",
+          "parent": "block5",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block2": {
+          "opcode": "kubohiroyacamerasource_hideCameraPreview",
+          "next": "block3",
+          "parent": "block1",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block3": {
+          "opcode": "kubohiroyacamerasource_stopSharedCamera",
+          "next": "block4",
+          "parent": "block2",
+          "inputs": {
+            "CAMERA_ID": [
+              1,
+              [
+                10,
+                "sample"
+              ]
+            ]
+          },
+          "fields": {},
+          "shadow": false,
+          "topLevel": false
+        },
+        "block4": {
+          "opcode": "data_setvariableto",
+          "next": null,
+          "parent": "block3",
+          "inputs": {
+            "VALUE": [
+              1,
+              [
+                4,
+                "0"
+              ]
+            ]
+          },
+          "fields": {
+            "VARIABLE": [
+              "Starting / scanning",
+              "busy"
+            ]
+          },
+          "shadow": false,
+          "topLevel": false
+        },
+        "block5": {
+          "opcode": "event_whenthisspriteclicked",
+          "next": "block1",
+          "parent": null,
+          "inputs": {},
+          "fields": {},
+          "shadow": false,
+          "topLevel": true,
+          "x": 30,
+          "y": 30
+        }
+      },
+      "comments": {},
+      "currentCostume": 0,
+      "costumes": [
+        {
+          "name": "Stop",
+          "assetId": "",
+          "md5ext": "stop.svg",
+          "dataFormat": "svg",
+          "rotationCenterX": 72,
+          "rotationCenterY": 24
+        }
+      ],
+      "sounds": [],
+      "volume": 0,
+      "layerOrder": 1,
+      "visible": true,
+      "x": 100,
+      "y": -110,
+      "size": 100,
+      "direction": 90,
+      "draggable": false,
+      "rotationStyle": "don't rotate"
+    }
+  ],
+  "monitors": [
+    {
+      "id": "running",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Camera running"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 72,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "width",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Frame width"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 96,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "height",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Frame height"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 120,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "error",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Camera error"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 144,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "cal-state",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Calibration state"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 168,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "count",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Accepted samples"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 192,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "guidance",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Guidance"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 216,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    },
+    {
+      "id": "cal-error",
+      "mode": "default",
+      "opcode": "data_variable",
+      "params": {
+        "VARIABLE": "Calibration error"
+      },
+      "spriteName": null,
+      "value": "",
+      "width": 0,
+      "height": 0,
+      "x": 10,
+      "y": 240,
+      "visible": true,
+      "sliderMin": 0,
+      "sliderMax": 100,
+      "isDiscrete": true
+    }
+  ],
+  "extensions": [],
+  "meta": {
+    "semver": "3.0.0",
+    "vm": "0.2.0",
+    "agent": "minimal sample"
+  }
+}

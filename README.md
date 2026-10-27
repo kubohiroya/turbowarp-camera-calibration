@@ -10,6 +10,12 @@ against a ChArUco board and publishes the resulting intrinsic calibration profil
 
 **User guide:** [English](https://kubohiroya.github.io/turbowarp-camera-calibration/)
 
+## Minimal sample
+
+[TurboWarp Editor](https://turbowarp.org/editor?project_url=https%3A%2F%2Fkubohiroya.github.io%2Fturbowarp-camera-calibration%2Fsamples%2Fcapture-calibration-board.sb3) · [SB3](https://kubohiroya.github.io/turbowarp-camera-calibration/samples/capture-calibration-board.sb3) · [Instructions, requirements and verification limits](samples/README.md)
+
+The green flag only displays status. Click **Start** to request camera permission; **Stop** releases the camera. A camera, HTTPS and permission are required. Physical capture, recognition and calibration success are unverified. Automated checks are silent and cover initial state and stopping.
+
 ## What it does
 
 - Runs a ChArUco calibration session against a camera leased from Camera Source, at the camera's real capture resolution.

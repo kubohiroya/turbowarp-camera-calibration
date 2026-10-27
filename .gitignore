@@ -19,3 +19,5 @@ coverage/
 tools/opencv/.work/
 
 lib-editor/
+
+_site/
