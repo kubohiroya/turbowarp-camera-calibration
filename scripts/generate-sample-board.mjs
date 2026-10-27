@@ -1,3 +1,6 @@
+import {URL} from 'node:url';
+import {Buffer} from 'node:buffer';
+import console from 'node:console';
 import {readFile, writeFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 const root = new URL('../', import.meta.url);
