@@ -7,6 +7,7 @@
     "dependencies": [
       {
         "id": "kubohiroyacamerasource",
+        "unsandboxed": true,
         "bundle": "samples/dependencies/camera-source.js",
         "sha256": "a28ee94053abe0950afd7be49c2996b277c4a1b2ff86987257dde4210c6aa552",
         "version": "0.21.0",
