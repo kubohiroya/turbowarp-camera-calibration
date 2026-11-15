@@ -11,8 +11,12 @@ import definitions from '../src/block-definitions.json' with {type:'json'};
 const targets = {"editable": ["startCameraCalibration.COLUMNS", "startCameraCalibration.ROWS", "startCameraCalibration.SQUARE_METERS", "startCameraCalibration.MARKER_METERS", "startCameraCalibration.MAX_ERROR_PX", "measureCameraBoardPose.COLUMNS", "measureCameraBoardPose.ROWS", "measureCameraBoardPose.SQUARE_METERS", "measureCameraBoardPose.MARKER_METERS", "measureCameraBoardPose.SCALE_SOURCE"], "readonly": []};
 const numeric = fixedInputEditors.flatMap(option=>option.bindings.filter(b=>b.control?.kind==='number').map(b=>({option,binding:b})));
 const definitionsByOpcode = definitions.blocks as readonly {opcode:string; arguments?:Readonly<Record<string,{defaultValue?:LiteralValue}>>}[];
+// createFixedInputEditor compiles every binding's Schema, and its result is frozen and stateless,
+// so the table-driven tests reuse one definition per option instead of compiling it per case.
+const definitionsByOption=new Map<FixedInputEditorOptions,ReturnType<typeof createFixedInputEditor>>();
 function fixture(option:FixedInputEditorOptions, values:Readonly<Record<string,LiteralValue|{kind:'reporter'}>>={}) {
-  const def=createFixedInputEditor(option);
+  let def=definitionsByOption.get(option);
+  if(!def){def=createFixedInputEditor(option);definitionsByOption.set(option,def);}
   const opcode=option.opcodes[0]!.slice(option.extensionId.length+1);
   const block=definitionsByOpcode.find(b=>b.opcode===opcode)!;
   const args:Record<string,ArgumentSlot>=Object.fromEntries(Object.entries(block.arguments??{}).map(([k,a])=>[k,{kind:'literal',value:a.defaultValue??''}]));
