@@ -13983,18 +13983,34 @@ function normalizeId(value, fallback = defaultCameraId) {
 var CameraCalibrationExtension = class {
 	constructor(options = {}) {
 		this.removeFixedEditors = () => {};
+		this.editorsReleased = false;
 		this.handleProjectBoundary = () => {
 			this.controller.cancelAll();
 		};
-		this.handleDisposed = () => {
+		this.releaseEditors = () => {
 			this.removeFixedEditors();
 			this.removeSourceEditors();
+			this.editorsReleased = true;
+		};
+		this.restoreEditors = () => {
+			if (!this.editorsReleased) return;
+			this.editorsReleased = false;
+			this.removeSourceEditors = registerSourceEditors(Scratch, this.nowMilliseconds);
+			try {
+				this.removeFixedEditors = registerFixedInputEditors(Scratch, fixedInputEditors, this.runtime);
+			} catch (error) {
+				this.releaseEditors();
+				throw error;
+			}
+		};
+		this.handleDisposed = () => {
 			if (this.runtime["kubohiroyaCameraCalibrationCapability"] === this.capability) delete this.runtime[runtimeCapabilityKey];
 			this.runtime.off?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
 			this.runtime.off?.("PROJECT_LOADED", this.handleProjectBoundary);
 			this.runtime.off?.("RUNTIME_DISPOSED", this.handleDisposed);
 			this.controller.cleanupAll();
 		};
+		this.nowMilliseconds = options.nowMilliseconds;
 		this.removeSourceEditors = registerSourceEditors(Scratch, options.nowMilliseconds);
 		this.runtime = options.runtime ?? Scratch.vm.runtime;
 		try {
@@ -14009,9 +14025,13 @@ var CameraCalibrationExtension = class {
 			this.runtime.on?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
 			this.runtime.on?.("PROJECT_LOADED", this.handleProjectBoundary);
 			this.runtime.on?.("RUNTIME_DISPOSED", this.handleDisposed);
+			this.runtime.on?.("RUNTIME_DISPOSED", this.releaseEditors);
+			this.runtime.on?.("PROJECT_LOADED", this.restoreEditors);
 		} catch (error) {
 			this.removeFixedEditors();
 			this.removeSourceEditors();
+			this.runtime.off?.("RUNTIME_DISPOSED", this.releaseEditors);
+			this.runtime.off?.("PROJECT_LOADED", this.restoreEditors);
 			this.runtime.off?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
 			this.runtime.off?.("PROJECT_LOADED", this.handleProjectBoundary);
 			this.runtime.off?.("RUNTIME_DISPOSED", this.handleDisposed);

@@ -61,10 +61,17 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
   private readonly runtime: TurboWarpRuntime;
   private capability: CameraCalibrationCapabilityV1 | undefined;
 
-  private readonly removeSourceEditors: () => void;
+  private removeSourceEditors: () => void;
   private removeFixedEditors: () => void = () => {};
+  private readonly nowMilliseconds: (() => number) | undefined;
+  /**
+   * Loading a project disposes the runtime, which releases the editor registrations, but the
+   * extension stays loaded for the next project. Register them again once that project has loaded.
+   */
+  private editorsReleased = false;
 
   public constructor(options: CameraCalibrationExtensionOptions = {}) {
+    this.nowMilliseconds = options.nowMilliseconds;
     this.removeSourceEditors = registerSourceEditors(Scratch, options.nowMilliseconds);
     this.runtime = options.runtime ?? Scratch.vm.runtime;
     try {
@@ -79,9 +86,13 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
       this.runtime.on?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
       this.runtime.on?.('PROJECT_LOADED', this.handleProjectBoundary);
       this.runtime.on?.('RUNTIME_DISPOSED', this.handleDisposed);
+      this.runtime.on?.('RUNTIME_DISPOSED', this.releaseEditors);
+      this.runtime.on?.('PROJECT_LOADED', this.restoreEditors);
     } catch (error) {
       this.removeFixedEditors();
       this.removeSourceEditors();
+      this.runtime.off?.('RUNTIME_DISPOSED', this.releaseEditors);
+      this.runtime.off?.('PROJECT_LOADED', this.restoreEditors);
       this.runtime.off?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
       this.runtime.off?.('PROJECT_LOADED', this.handleProjectBoundary);
       this.runtime.off?.('RUNTIME_DISPOSED', this.handleDisposed);
@@ -263,9 +274,26 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     void this.controller.cancelAll();
   };
 
-  private readonly handleDisposed = (): void => {
+  /** Not final for the editors: they register again with the next project. */
+  private readonly releaseEditors = (): void => {
     this.removeFixedEditors();
     this.removeSourceEditors();
+    this.editorsReleased = true;
+  };
+
+  private readonly restoreEditors = (): void => {
+    if (!this.editorsReleased) return;
+    this.editorsReleased = false;
+    this.removeSourceEditors = registerSourceEditors(Scratch, this.nowMilliseconds);
+    try {
+      this.removeFixedEditors = registerFixedInputEditors(Scratch, fixedInputEditors, this.runtime);
+    } catch (error) {
+      this.releaseEditors();
+      throw error;
+    }
+  };
+
+  private readonly handleDisposed = (): void => {
     // Taken down with the runtime it belongs to, so a consumer that outlives
     // the VM reads an absent extension rather than driving a dead controller.
     if (this.runtime[runtimeCapabilityKey] === this.capability) {
