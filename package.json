@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-camera-calibration",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "description": "A TurboWarp extension that calibrates a shared Camera Source camera and publishes its intrinsic calibration profile.",
   "author": {
     "name": "Hiroya Kubo",
