@@ -43,7 +43,9 @@ function setup(options: Partial<CameraCalibrationExtensionOptions> = {}) {
     on: (event: string, listener: () => void) => {
       (listeners[event] ??= []).push(listener);
     },
-    off: vi.fn()
+    off: vi.fn((event: string, listener: () => void) => {
+      listeners[event] = (listeners[event] ?? []).filter((candidate) => candidate !== listener);
+    })
   };
   const extension = new CameraCalibrationExtension({
     runtime,
@@ -276,13 +278,26 @@ describe('the runtime capability', () => {
     expect(extension.cameraCalibrationErrorCode({CAMERA_ID: 'default'})).toBe('invalid-board');
   });
 
-  it('goes away with the runtime it belongs to', async () => {
-    const {runtime, emit} = setup();
-    expect(readCameraCalibrationCapability(runtime)).toBeDefined();
+  it('stays published for the next project the extension is loaded for', async () => {
+    // Every project load disposes the runtime, yet keeps the extension loaded.
+    const {extension, runtime, emit, release} = setup();
+    const capability = readCameraCalibrationCapability(runtime);
+    expect(capability).toBeDefined();
     await emit('RUNTIME_DISPOSED');
-    // A consumer outliving the VM reads an absent extension rather than
-    // driving a controller whose camera leases are already gone.
-    expect(readCameraCalibrationCapability(runtime)).toBeUndefined();
+    await emit('PROJECT_LOADED');
+    expect(readCameraCalibrationCapability(runtime)).toBe(capability);
+    await extension.startCameraCalibration({
+      CAMERA_ID: 'left',
+      CALIBRATION_ID: 'calibration-1',
+      COLUMNS: 9,
+      ROWS: 6,
+      SQUARE_METERS: 0.025,
+      MARKER_METERS: 0.018,
+      MAX_ERROR_PX: 1.5
+    });
+    // The second project still has its camera released at its own boundary.
+    await emit('PROJECT_STOP_ALL');
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('reports an unsolved camera as unsolved rather than as a flawless one', () => {

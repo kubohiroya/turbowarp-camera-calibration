@@ -14004,10 +14004,6 @@ var CameraCalibrationExtension = class {
 			}
 		};
 		this.handleDisposed = () => {
-			if (this.runtime["kubohiroyaCameraCalibrationCapability"] === this.capability) delete this.runtime[runtimeCapabilityKey];
-			this.runtime.off?.("PROJECT_STOP_ALL", this.handleProjectBoundary);
-			this.runtime.off?.("PROJECT_LOADED", this.handleProjectBoundary);
-			this.runtime.off?.("RUNTIME_DISPOSED", this.handleDisposed);
 			this.controller.cleanupAll();
 		};
 		this.nowMilliseconds = options.nowMilliseconds;

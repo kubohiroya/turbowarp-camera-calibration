@@ -293,15 +293,12 @@ export class CameraCalibrationExtension implements TurboWarpExtension {
     }
   };
 
+  /**
+   * Every project load disposes the runtime while the extension stays loaded,
+   * so this ends only the project's sessions. The capability and the listeners
+   * stay for the next project; the controller reopens what it needs on demand.
+   */
   private readonly handleDisposed = (): void => {
-    // Taken down with the runtime it belongs to, so a consumer that outlives
-    // the VM reads an absent extension rather than driving a dead controller.
-    if (this.runtime[runtimeCapabilityKey] === this.capability) {
-      delete this.runtime[runtimeCapabilityKey];
-    }
-    this.runtime.off?.('PROJECT_STOP_ALL', this.handleProjectBoundary);
-    this.runtime.off?.('PROJECT_LOADED', this.handleProjectBoundary);
-    this.runtime.off?.('RUNTIME_DISPOSED', this.handleDisposed);
     void this.controller.cleanupAll();
   };
 
