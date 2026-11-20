@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-camera-calibration",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "A TurboWarp extension that calibrates a shared Camera Source camera and publishes its intrinsic calibration profile.",
   "author": {
     "name": "Hiroya Kubo",
@@ -111,5 +111,23 @@
   "sideEffects": [
     "src/index.ts",
     "dist/*"
-  ]
+  ],
+  "turbowarpExtension": {
+    "resourceDeclaration": {
+      "schemaVersion": 1,
+      "resources": [
+        {
+          "type": "camera",
+          "usage": "required",
+          "purpose": {
+            "en": "Read shared camera frames to calibrate the lens",
+            "ja": "共有カメラの映像からレンズを校正する"
+          },
+          "via": [
+            "@kubohiroya/turbowarp-camera-source"
+          ]
+        }
+      ]
+    }
+  }
 }
