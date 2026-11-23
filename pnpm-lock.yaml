@@ -12,11 +12,11 @@ importers:
   .:
     dependencies:
       '@kubohiroya/turbowarp-camera-source':
-        specifier: ^0.25.0
-        version: 0.25.0
+        specifier: ^0.25.1
+        version: 0.25.1
       '@kubohiroya/turbowarp-extension-data-editor':
-        specifier: ^0.11.2
-        version: 0.11.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: ^0.11.4
+        version: 0.11.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       comlink:
         specifier: 4.4.2
         version: 4.4.2
@@ -128,12 +128,12 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kubohiroya/turbowarp-camera-source@0.25.0':
-    resolution: {integrity: sha512-9AxxDQRcnUw6KcPNd3m7F9d9L9LqDIOGj2So3MqnTDIZYueDluYun9SbWH3BYNrCrxe8QNKAEKOBDibdz85eFg==}
+  '@kubohiroya/turbowarp-camera-source@0.25.1':
+    resolution: {integrity: sha512-MTAWn6wyuUf+YIkMotyQUPsUUZi/ps/Tas/H3579OYfctS9tSAOqwL6yH/nGZV233Tlcr+GmQnqkqKe7nuL3/w==}
     engines: {node: '>=24'}
 
-  '@kubohiroya/turbowarp-extension-data-editor@0.11.2':
-    resolution: {integrity: sha512-uTOZJSNVzvpJIMGyOUTaQt2LOXXf5kru8mUyRD2Y/rsYUNJoGM4S8dhEI5UeyDFaXR7rCRVzkFR5pAcqjmSycQ==}
+  '@kubohiroya/turbowarp-extension-data-editor@0.11.4':
+    resolution: {integrity: sha512-kERbN1zFSoSUPwuZBgW3Ia7R6KHZ3B5MwDDomtVtIOr5QtjHx3NYMmxGE++w46KlkMWZvHFnneND7siFeNLQFw==}
     engines: {node: '>=24'}
     peerDependencies:
       react: ^16.14.0 || ^17 || ^18
@@ -1134,9 +1134,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@kubohiroya/turbowarp-camera-source@0.25.0': {}
+  '@kubohiroya/turbowarp-camera-source@0.25.1': {}
 
-  '@kubohiroya/turbowarp-extension-data-editor@0.11.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@kubohiroya/turbowarp-extension-data-editor@0.11.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@rjsf/core': 5.24.13(@rjsf/utils@5.24.13(react@18.3.1))(react@18.3.1)
       '@rjsf/utils': 5.24.13(react@18.3.1)
